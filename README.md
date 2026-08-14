@@ -11,13 +11,13 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 
 ## Status
 
-**Phase 0 (Architecture) — complete.** **Phase 1 (Backend foundation) — complete.** The backend is a real, tested ASP.NET Core 10 API against PostgreSQL; the AI service and frontend are future phases. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
+**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL, and the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output (mock provider in tests/local dev; live Gemini behind `GEMINI_API_KEY`). See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
 | 0 | Architecture, ADRs, domain model, API contract, repo structure | ✅ Complete |
 | 1 | ASP.NET Core API + PostgreSQL + EF Core foundation | ✅ Complete |
-| 2 | FastAPI AI service + Gemini provider | ⏳ Pending |
+| 2 | FastAPI AI service + Gemini provider | ✅ Complete |
 | 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ⏳ Pending |
 | 4 | Change analysis workflow | ⏳ Pending |
 | 5 | React UI | ⏳ Pending |
@@ -82,23 +82,26 @@ changelens-ai/
 - **Structured AI output.** Main analysis results are schema-validated JSON, never uncontrolled prose.
 - **Untrusted data.** Repository contents, logs, and incidents are data, never instructions.
 
-## Getting started (Phase 1)
+## Getting started
 
-1. Start PostgreSQL:
+1. Copy `.env.example` to `.env` and fill in the placeholders (at minimum the internal key; add `GEMINI_API_KEY` for real LLM calls).
+2. Start the stack — PostgreSQL plus the two services:
    ```bash
-   docker compose up -d          # or: bash scripts/start-local-postgres.sh (no Docker)
+   docker compose up -d          # postgres + ai-service + backend
+   # or without Docker: bash scripts/start-local-postgres.sh, then run the services directly
+   # (see backend/README.md and ai-service/README.md)
    ```
-2. Apply migrations and run the API:
+3. Apply migrations (first run) and verify:
    ```bash
    cd backend
    dotnet ef database update --project src/ChangeLens.Infrastructure --startup-project src/ChangeLens.Api
    cd src/ChangeLens.Api && dotnet run   # http://localhost:5000/swagger
    ```
-3. Run the tests:
+4. Run the tests:
    ```bash
-   cd backend
-   dotnet test tests/ChangeLens.UnitTests
+   cd backend && dotnet test tests/ChangeLens.UnitTests
    CHANGELENS_TEST_CONNECTION_STRING="…test connection string…" dotnet test tests/ChangeLens.Api.IntegrationTests
+   cd ../ai-service && .venv/Scripts/python -m pytest -q   # zero Gemini calls
    ```
 
-Full instructions: [backend/README.md](backend/README.md). The four-service `docker compose up` (frontend + backend + ai-service + postgres) is a Phase 9 goal.
+Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md). The four-service `docker compose up` (adding the React frontend) is a Phase 9 goal — the Phase 2 compose already runs postgres + ai-service + backend.

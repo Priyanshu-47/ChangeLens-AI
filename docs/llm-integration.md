@@ -16,6 +16,8 @@ Implemented by `GeminiProvider` (MVP, via the `google-genai` SDK). `OpenAIProvid
 
 Every result carries `usage { inputTokens, outputTokens, latencyMs }` so the backend can persist AI-run metadata and estimate cost.
 
+> **Phase 2 note:** the implemented `IAIProvider` protocol currently declares `complete_structured` only (the one capability with a consumer today); `complete_text` and `embed_texts` join in later phases when summaries/embeddings exist — no placeholder methods. The mock provider (`AI_PROVIDER=mock`) implements the same protocol deterministically and is the default for local dev and tests.
+
 ## 2. Gemini configuration (never hardcoded)
 
 | Setting | Env var | Default | Notes |

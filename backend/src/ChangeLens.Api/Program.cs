@@ -98,6 +98,15 @@ if (!app.Environment.IsDevelopment() &&
         "Jwt:SigningKey must be a real secret for non-development environments. Set JWT__SIGNING_KEY.");
 }
 
+// The AI service internal key is a shared secret: never ship the dev placeholder outside Development.
+var aiOptions = builder.Configuration.GetSection(AiOptions.SectionName).Get<AiOptions>() ?? new AiOptions();
+if (!app.Environment.IsDevelopment() &&
+    (string.IsNullOrWhiteSpace(aiOptions.ApiKey) || aiOptions.ApiKey.StartsWith("change-me", StringComparison.Ordinal)))
+{
+    throw new InvalidOperationException(
+        "Ai:ApiKey must be a real shared secret for non-development environments. Set AI__APIKEY.");
+}
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())

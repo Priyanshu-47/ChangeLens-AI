@@ -1,14 +1,15 @@
 # ChangeLens AI — local development stack.
 #
-# Phase 1: PostgreSQL only (with pgvector for the future ai schema).
-# Phase 9 expands this file to the full four-service stack
-# (frontend, backend, ai-service, postgres) — see docs/development-sequence.md.
+# Phase 2: postgres + backend + ai-service. Phase 9 adds the React frontend.
 #
 # Usage:  docker compose up -d
 #         docker compose down     (keeps the pgdata volume)
 #         docker compose down -v  (also deletes data)
 #
-# No Docker? Use scripts/start-local-postgres.sh instead.
+# No Docker? Use scripts/start-local-postgres.sh for PostgreSQL and run the
+# backend / ai-service directly (see backend/README.md, ai-service/README.md).
+#
+# Secrets come from the environment / .env (see .env.example). NEVER commit .env.
 
 services:
   postgres:
@@ -27,6 +28,60 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  ai-service:
+    build:
+      context: ./ai-service
+    container_name: changelens-ai
+    environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set (see .env.example)}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-3.7-flash}
+      GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-60}
+      GEMINI_MAX_RETRIES: ${GEMINI_MAX_RETRIES:-3}
+      GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-8192}
+      AI_MAX_REPAIR_ATTEMPTS: ${AI_MAX_REPAIR_ATTEMPTS:-2}
+      AI_READINESS_PROBE: ${AI_READINESS_PROBE:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${AI_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        BUILD_CONFIGURATION: Release
+    container_name: changelens-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-changelens};Username=${POSTGRES_USER:-changelens};Password=${POSTGRES_PASSWORD:-changelens_dev_password}"
+      Jwt__Issuer: ${JWT_ISSUER:-changelens-dev}
+      Jwt__Audience: ${JWT_AUDIENCE:-changelens-client}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set (see .env.example)}
+      Seed__Enabled: "true"
+      # The backend talks to the AI service by Docker service name, never localhost.
+      Ai__BaseUrl: http://ai-service:8000
+      Ai__ApiKey: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set (see .env.example)}
+    ports:
+      - "${API_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
 volumes:
   pgdata:

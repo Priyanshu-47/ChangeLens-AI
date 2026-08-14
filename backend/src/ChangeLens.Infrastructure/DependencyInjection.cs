@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace ChangeLens.Infrastructure;
 
@@ -40,10 +41,26 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<AppDbContext>();
 
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+        services.Configure<AiOptions>(configuration.GetSection(AiOptions.SectionName));
 
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<AuthenticationService>();
         services.AddScoped<SeedData>();
+
+        services.AddHttpClient<IAiServiceClient, AiServiceClient>((sp, client) =>
+        {
+            var ai = sp.GetRequiredService<IOptions<AiOptions>>().Value;
+
+            if (!Uri.TryCreate(ai.BaseUrl, UriKind.Absolute, out var baseUri)
+                || baseUri.Scheme is not ("http" or "https"))
+            {
+                throw new InvalidOperationException(
+                    $"AI:BaseUrl must be an absolute http(s) URL. Set AI__BASEURL. (Current value: '{ai.BaseUrl}')");
+            }
+
+            client.BaseAddress = baseUri;
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(1, ai.TimeoutSeconds));
+        });
 
         return services;
     }

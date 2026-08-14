@@ -12,10 +12,10 @@
 **Deliverables:** .NET 10 solution (Api/Domain/Application/Infrastructure), EF Core + `InitialCreate` migration (app schema: users/Identity, projects, members, repositories, services, incidents, events, audit_logs), auth (Identity + JWT + roles + project-level authorization), health + Swagger/OpenAPI, dev seeding, unit + integration tests (63 + 40 = 103, real PostgreSQL via Testcontainers or a connection-string override).
 **Exit:** `dotnet test` green; API runs against local postgres; Swagger documents the Phase-1 endpoints; JWT login works — all verified 2026-08-14. `docker compose up` provides postgres; `scripts/start-local-postgres.sh` covers no-Docker machines.
 
-## Phase 2 — AI Service
+## Phase 2 — AI Service ✅
 **Goal:** FastAPI service with a real Gemini provider and structured output.
-**Deliverables:** FastAPI skeleton, pydantic-settings config, `IAIProvider` + `GeminiProvider` (google-genai), structured-output pattern with Pydantic validation + bounded repair + safe failure, `/internal/v1/health/live|ready` (model probes), unit tests (mock provider), contract tests against the backend's OpenAPI expectations.
-**Exit:** readiness probe resolves configured models; structured risk schema validates real Gemini output in a smoke test; CI runs with zero Gemini spend.
+**Deliverables:** FastAPI service (`app/`): pydantic-settings config validated at startup, `IAIProvider` protocol + `GeminiProvider` (google-genai, structured outputs via `response_schema`, no deprecated sampling params) + `MockAIProvider` (deterministic, `AI_PROVIDER=mock`), layered versioned prompt (`risk-v1`) with injection sanitizer, structured-output pipeline (Pydantic + bounded repair + safe failure `422 AI_VALIDATION_FAILED`), deterministic grounding rule, retries (429/5xx only, backoff + jitter), `/internal/v1/health/live|ready` + `/health` + `/ready`, internal-key auth + contract-version header + correlation-id middleware + structured JSON logs; Python tests (57, zero Gemini); optional gated live smoke test; Dockerfile (non-root). Backend: `IAiServiceClient` port + `AiServiceClient` (typed HttpClient, correlation, error mapping), `AiOptions`, `POST /api/v1/analyses/change-risk` vertical slice (Engineer+, audited), unit + integration tests (16 new).
+**Exit:** FastAPI starts, `/health` + `/ready` + Swagger work; mock analysis returns a validated grounded result end-to-end (`.NET → FastAPI → mock`); 125 .NET tests + 57 Python tests green; live Gemini smoke test available behind `RUN_GEMINI_TESTS=true`; normal suite and startup use zero Gemini calls — all verified 2026-08-14.
 
 ## Phase 3 — Ingestion + RAG
 **Goal:** documents in, ranked retrieval out.

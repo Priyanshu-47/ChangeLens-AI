@@ -18,6 +18,9 @@ public sealed class DatabaseFixture : IAsyncLifetime
 
     public AppFactory Factory { get; private set; } = null!;
 
+    /// <summary>Connection string of the shared test database (container or external).</summary>
+    public string ConnectionString { get; private set; } = string.Empty;
+
     public async Task InitializeAsync()
     {
         var connectionString = Environment.GetEnvironmentVariable("CHANGELENS_TEST_CONNECTION_STRING");
@@ -35,13 +38,18 @@ public sealed class DatabaseFixture : IAsyncLifetime
             connectionString = _container.GetConnectionString();
         }
 
-        Factory = new AppFactory(connectionString);
+        ConnectionString = connectionString;
+        Factory = CreateFactory();
 
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.MigrateAsync();
         await scope.ServiceProvider.GetRequiredService<SeedData>().EnsureSeededAsync();
     }
+
+    /// <summary>A factory over the same shared database, with optional service overrides.</summary>
+    public AppFactory CreateFactory(Action<IServiceCollection>? configureServices = null)
+        => new(ConnectionString, configureServices);
 
     public async Task DisposeAsync()
     {

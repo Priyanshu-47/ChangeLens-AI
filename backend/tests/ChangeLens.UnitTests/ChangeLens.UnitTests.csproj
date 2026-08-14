@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ChangeLens.Application\ChangeLens.Application.csproj" />
     <ProjectReference Include="..\..\src\ChangeLens.Domain\ChangeLens.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ChangeLens.Infrastructure\ChangeLens.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
