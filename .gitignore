@@ -1,0 +1,61 @@
+# ── Environment / secrets ──────────────────────────────────────────────
+# Never commit real secrets. .env.example is the allowed template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── .NET / ASP.NET Core ─────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+TestResults/
+coverage/
+coverage.*.xml
+*.trx
+
+# ── Python / AI service ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.ai-service-env/
+
+# ── Node / frontend ─────────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+coverage/
+.vite/
+
+# ── Docker / local data ─────────────────────────────────────────────────
+pgdata/
+*.log
+docker/data/
+
+# ── IDE / OS ────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+.DS_Store
+Thumbs.db
+
+# ── Agent / tooling state ───────────────────────────────────────────────
+.freebuff/
+
+# ── Misc ────────────────────────────────────────────────────────────────
+*.swp
+*~
