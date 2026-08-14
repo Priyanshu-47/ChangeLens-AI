@@ -1,0 +1,8 @@
+# Normalize all text files to LF in the repository (Git for Windows converts on checkout).
+* text=auto
+
+# Shell scripts must stay LF — CRLF breaks bash on Unix-like systems.
+*.sh text eol=lf
+
+# Environment template (parsed by docker compose and dotenv) — keep LF.
+.env.example text eol=lf

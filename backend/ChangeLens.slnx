@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ChangeLens.Api/ChangeLens.Api.csproj" />
+    <Project Path="src/ChangeLens.Application/ChangeLens.Application.csproj" />
+    <Project Path="src/ChangeLens.Domain/ChangeLens.Domain.csproj" />
+    <Project Path="src/ChangeLens.Infrastructure/ChangeLens.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ChangeLens.Api.IntegrationTests/ChangeLens.Api.IntegrationTests.csproj" />
+    <Project Path="tests/ChangeLens.UnitTests/ChangeLens.UnitTests.csproj" />
+  </Folder>
+</Solution>
