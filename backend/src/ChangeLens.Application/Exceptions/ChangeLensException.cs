@@ -16,4 +16,7 @@ public abstract class ChangeLensException : Exception
     public int StatusCode { get; }
 
     public string Code { get; }
+
+    /// <summary>Optional structured payload (e.g. AI validation details). Included in the ProblemDetails body.</summary>
+    public virtual object? Details => null;
 }

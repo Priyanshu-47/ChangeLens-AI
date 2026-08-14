@@ -1,8 +1,8 @@
 # backend — ChangeLens API (ASP.NET Core 10)
 
-> **Phase 1 — complete.** ASP.NET Core 10 Web API foundation: Identity + JWT auth, project-level authorization, projects/repositories/services/incidents, audit log, health checks, Swagger/OpenAPI, EF Core migrations against PostgreSQL, 103 tests.
+> **Phase 2 — complete (Phase 1 backend + AI vertical slice).** ASP.NET Core 10 Web API foundation: Identity + JWT auth, project-level authorization, projects/repositories/services/incidents, audit log, health checks, Swagger/OpenAPI, EF Core migrations against PostgreSQL — plus a typed client for the Python AI service and the `POST /api/v1/analyses/change-risk` vertical slice. 125 tests.
 
-The orchestrator of ChangeLens AI: it owns authentication, the domain model, workflow orchestration (later phases), persistence (`app` schema), and the audit trail. It never calls Gemini directly — the Python AI service (Phase 2+) is its only AI-facing dependency.
+The orchestrator of ChangeLens AI: it owns authentication, the domain model, workflow orchestration (later phases), persistence (`app` schema), and the audit trail. It never calls Gemini directly — the Python AI service is its only AI-facing dependency (`.NET → FastAPI → Gemini`).
 
 ## Purpose
 
@@ -36,6 +36,9 @@ Phase 1 uses ASP.NET Core configuration: `appsettings.json` + `appsettings.Devel
 | `Jwt__Issuer` / `Jwt__Audience` | yes | `changelens-dev` / `changelens-client` | |
 | `Jwt__SigningKey` | yes | dev placeholder | **Must be a real secret outside Development** — startup fails otherwise |
 | `Jwt__ExpiryMinutes` | no | 480 | |
+| `Ai__BaseUrl` | yes (analyses) | `http://localhost:8000` in Development | Python AI service base URL (compose: `http://ai-service:8000`) |
+| `Ai__ApiKey` | yes (analyses) | dev placeholder | Internal shared key sent as `X-Internal-Key` — **must be a real secret outside Development** |
+| `Ai__TimeoutSeconds` | no | 120 | Backend-side HTTP timeout for one analysis call |
 | `Seed__Enabled` | no | `true` in Development | Seeds roles + demo users |
 
 Demo users (Development seed, dev-only passwords):
@@ -86,9 +89,19 @@ CHANGELENS_TEST_CONNECTION_STRING="Host=localhost;Port=5433;Database=changelens_
   dotnet test tests/ChangeLens.Api.IntegrationTests
 ```
 
-Tests never call external AI services; the LLM/Gemini integration is Phase 2+.
+Tests never call external AI services: unit tests stub the AI client, integration tests replace it with a deterministic fake — Gemini is never contacted by the test suite.
 
-## API surface (Phase 1)
+## AI service integration (Phase 2 vertical slice)
+
+The backend talks to the Python AI service through `IAiServiceClient` (port) → `AiServiceClient` (Infrastructure, typed `HttpClient`). It sends the internal key, the `X-Contract-Version: 1` header, and the correlation id (incoming `X-Correlation-ID` or generated), enforces the HTTP timeout, and maps AI error envelopes to typed exceptions (429 → `llm_rate_limited`, 504 → `ai_timeout`, 422 → `ai_validation_failed` with upstream details, else 502). Start the AI service first (mock or Gemini — see [ai-service/README.md](../ai-service/README.md)), then:
+
+```bash
+cd ai-service && AI_PROVIDER=mock INTERNAL_API_KEY=change-me-internal-key .venv/Scripts/python -m uvicorn app.main:app --port 8000
+cd backend/src/ChangeLens.Api && AI__ApiKey=change-me-internal-key dotnet run
+# POST /api/v1/analyses/change-risk with a JWT → validated risk report + usage metadata
+```
+
+## API surface (Phase 1 + Phase 2 slice)
 
 | Method | Path | Notes |
 | --- | --- | --- |
@@ -107,10 +120,11 @@ Tests never call external AI services; the LLM/Gemini integration is Phase 2+.
 | GET/PATCH | `/api/v1/incidents/{incidentId}` | Detail incl. timeline / update |
 | POST | `/api/v1/incidents/{incidentId}/events` | Append a timeline event |
 | GET | `/api/v1/audit-logs?projectId=` | Audit trail (Owner/Admin) |
+| POST | `/api/v1/analyses/change-risk` | **Phase 2 slice:** change-risk analysis via the AI service (Engineer+). Synchronous 200 today; becomes 202 + poll in Phase 4 |
 | GET | `/health`, `/api/v1/health` | Liveness / full health (unauthenticated) |
 
-Errors use the uniform envelope: `{ type, title, status, detail, traceId, code }`. See [docs/api-contract.md](../docs/api-contract.md).
+Errors use the uniform envelope: `{ type, title, status, detail, traceId, code }` (+ `details` for AI validation failures). See [docs/api-contract.md](../docs/api-contract.md).
 
 ## Current phase
 
-Phase 1 of 10. See [docs/development-sequence.md](../docs/development-sequence.md) for what lands in Phase 2 (FastAPI AI service + Gemini provider). Not yet implemented: anything AI/RAG related, pull requests/change analysis, deployments, React UI, Docker images for the API.
+Phase 2 of 10. See [docs/development-sequence.md](../docs/development-sequence.md). Not yet implemented: RAG (Phase 3), change parsing/dependency analysis + async job runner + result persistence (Phase 4), React UI (Phase 5), agent tools (Phase 6), evaluation (Phase 7), observability/rate limiting (Phase 8), CI/CD (Phase 9).

@@ -19,4 +19,6 @@ public static class AuditActions
     public const string IncidentCreated = "IncidentCreated";
     public const string IncidentUpdated = "IncidentUpdated";
     public const string IncidentEventAdded = "IncidentEventAdded";
+
+    public const string AnalysisRequested = "AnalysisRequested";
 }

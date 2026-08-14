@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ChangeLens.Api.IntegrationTests.Infrastructure;
 
@@ -10,7 +11,9 @@ namespace ChangeLens.Api.IntegrationTests.Infrastructure;
 /// Seeding is performed by the fixture after migrations are applied (the app itself
 /// never seeds in tests).
 /// </summary>
-public sealed class AppFactory(string connectionString) : WebApplicationFactory<Program>
+public sealed class AppFactory(
+    string connectionString,
+    Action<IServiceCollection>? configureServices = null) : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -22,5 +25,10 @@ public sealed class AppFactory(string connectionString) : WebApplicationFactory<
         Environment.SetEnvironmentVariable("Jwt__Audience", "changelens-test-client");
         Environment.SetEnvironmentVariable("Jwt__SigningKey", "test-only-signing-key-0123456789abcdef0123456789abcdef");
         Environment.SetEnvironmentVariable("Jwt__ExpiryMinutes", "60");
+
+        if (configureServices is not null)
+        {
+            builder.ConfigureServices(configureServices);
+        }
     }
 }

@@ -73,6 +73,8 @@ The backend stores `results` (ids, scores) into `analysis_runs.retrieved_documen
 Request: the **evidence package** the backend assembled — changed files with parsed symbol references, dependency impact set, API contracts, retrieved documents (content + metadata + scores), historical incidents, runbooks. Plus `projectId`, `schemaVersion`, `promptVersion` (backend may pin).
 Response: a validated `RiskAnalysisResult` (the JSON shape from [api-contract.md](api-contract.md) §3) wrapped with `usage` metadata. **Schema validation happens inside the AI service before any response leaves it** ([ADR-0007](adr/0007-structured-output-schema-validation.md)).
 
+> **Phase 2 status:** implemented end-to-end with the evidence package passed directly in the request (changed files + change summary; the retrieval-backed sections are empty until Phase 3). The concrete request/response models live in `ai-service/app/models/` (`requests.py`, `responses.py`); `AnalysisUsage` carries model, prompt version, latency, tokens (null when the provider exposes none), estimated cost (null unless pricing is configured), validation status, repair attempts, and an evidence-truncation flag. `promptVersion` pins a known versioned prompt (`risk-v1`) or falls back to the default.
+
 ### `POST /internal/v1/analysis/incident`
 Same shape philosophy: incident + normalized events + deployments-in-window + retrieved context in; validated `IncidentInvestigationResult` out.
 
