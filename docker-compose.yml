@@ -33,6 +33,9 @@ services:
     build:
       context: ./ai-service
     container_name: changelens-ai
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set (see .env.example)}
       AI_PROVIDER: ${AI_PROVIDER:-gemini}
@@ -43,7 +46,17 @@ services:
       GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-8192}
       AI_MAX_REPAIR_ATTEMPTS: ${AI_MAX_REPAIR_ATTEMPTS:-2}
       AI_READINESS_PROBE: ${AI_READINESS_PROBE:-false}
+      AI_AUTO_RETRIEVE: ${AI_AUTO_RETRIEVE:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Phase 3: the ai schema lives in the same PostgreSQL instance (ai schema owned by this service).
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-changelens}:${POSTGRES_PASSWORD:-changelens_dev_password}@postgres:5432/${POSTGRES_DB:-changelens}"
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-10}
+      RETRIEVAL_CANDIDATE_K: ${RETRIEVAL_CANDIDATE_K:-50}
+      RRF_K: ${RRF_K:-60}
     ports:
       - "${AI_PORT:-8000}:8000"
     healthcheck:

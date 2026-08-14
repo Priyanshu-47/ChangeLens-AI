@@ -62,3 +62,61 @@ Every search records: normalized queries, applied filters, per-leg top results w
 | English-centric full-text tokenization for code | Custom identifier tokenizer (camelCase/snake_case splitting) is part of the keyword leg |
 | Chunk boundary artifacts (method split mid-body) | Overlap within method bodies only; chunk_type metadata lets the LLM know it may need adjacent chunks — the backend can fetch siblings on request |
 | Embedding model drift | Model-versioned embeddings + re-index workflow + evaluation detects quality regression before it ships |
+
+## 7. Phase 3 implementation status (actual, not aspirational)
+
+Phase 3 (commit `feat: implement phase 3 hybrid rag`) implemented the pipeline in the
+AI service. This section records what is real in the code today; everything below is
+verified against `ai-service/`.
+
+**Implemented**
+
+- **Ingestion** (`POST /internal/v1/ingest/documents`): `document → normalize → hash →
+  structure-aware chunking → persist chunks → batch embeddings → persist vectors`.
+  Idempotent: unchanged content (same sha256 of normalized content) skips re-chunking
+  and re-embedding; changed content re-chunks and cascades old chunks; stale embedding
+  model version triggers re-embed only. Batch failures are reported per chunk in the
+  response (`errors`) and retried on the next ingest — never silently dropped.
+- **Chunking**: tree-sitter code chunker (csharp, javascript, typescript, python) emitting
+  Class/Interface/Method/Constructor/Property chunks with `namespace`/`class` metadata;
+  unknown languages fall back to one honest File chunk (never a blind N-char split).
+  Incident and Runbook chunkers split on headings and keep heading context in each chunk.
+  `ApiDefinition`/`DeploymentRecord` use the heading-section fallback until their data
+  sources land (Phase 4).
+- **Embeddings**: `IEmbeddingProvider` protocol with `GeminiEmbeddingProvider`
+  (`GEMINI_EMBEDDING_MODEL`, default `text-embedding-004`, 768-dim) and a deterministic
+  `MockEmbeddingProvider` (gram-overlap vectors, $0, used by dev/tests). Dimension is
+  validated on every vector; mismatches fail loudly. Embedding calls happen only during
+  ingestion/re-index and query-time vector search — never at startup or on health checks.
+- **Storage**: `ai` schema (`documents`, `document_chunks`, `embeddings`) migrated via
+  Alembic (version table `ai.alembic_version_ai`), pgvector `vector(768)` column + HNSW
+  (cosine) index, GIN index over a generated `content_tsv` (`simple` config — exact
+  technical terms: `TimeoutException`, `401`, `JWT`, `retry`). Migrations are constrained
+  to the `ai` schema only (ADR-0003).
+- **Hybrid retrieval** (`POST /internal/v1/retrieval/search`): vector leg (pgvector cosine)
+  + keyword leg (PostgreSQL FTS) with `project_id` applied inside every SQL statement
+  (hard isolation — never trusted from input), optional `document_type`/`service_id`/
+  `language`/`environment` filters, merged with configurable RRF (`RRF_K=60`). Results
+  carry per-source scores (`vector`, `keyword` rank) so the UI can explain *why*.
+- **RAG-fed analysis**: when the backend request has no `retrievedDocuments`, the analysis
+  service auto-runs hybrid retrieval (change summary + changed-file names) and renders the
+  hits as `<evidence id="chunk:<uuid>">`. The grounding validator enforces that every risk
+  factor references a real evidence id from the index — invented ids fail validation and
+  trigger bounded repair.
+- **Demo corpus**: `data/demo-repository` (AcmePay, 24 C# files, compiles), 20 synthetic
+  incidents, 5 runbooks, and a 20-case golden dataset (`data/golden-dataset/cases.json`).
+  Seeding is a script: `ai-service/scripts/seed_demo.py` (idempotent).
+- **Readiness** reports database reachability + vector extension availability; a live
+  provider probe stays opt-in (`AI_READINESS_PROBE`) so health never spends tokens.
+
+**Deferred (Phase 4+ — documented here so nobody claims otherwise)**
+
+- Cross-encoder reranker — explicitly NOT implemented (MVP = RRF; revisit only if
+  evaluation shows RRF insufficient).
+- Dependency-relationship retrieval leg — the interface exists (evidence ids are stable)
+  but the dependency contribution is empty until the Roslyn analyzer populates it.
+- Structured (non-text) incident fields, OpenAPI path-item chunker, JSON/YAML structural
+  chunker, and the identifier-aware tokenizer for the keyword leg.
+- Persisting retrieval queries/ranks into `analysis_runs` for the evaluation engine
+  (Phase 4 evaluation phase).
+- No measured accuracy metrics exist — the golden dataset defines *targets* only.

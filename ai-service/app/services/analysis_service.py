@@ -1,14 +1,14 @@
-"""Analysis service: the structured-output pipeline (ADR-0007).
+"""Analysis service: the structured-output pipeline (ADR-0007) with retrieval (Phase 3).
 
-Flow:  prompt -> provider -> Pydantic validation -> deterministic post-checks
-       (confidence bounds, array caps, grounding rule) -> SUCCESS
-On failure: bounded repair (re-prompt with the exact validation errors, max N attempts),
-then SAFE FAILURE (422 AI_VALIDATION_FAILED with attempt history). Unvalidated prose is
-never returned as a result.
+Flow: change request -> hybrid retrieval (auto) -> evidence package -> layered prompt
+-> provider -> Pydantic validation -> deterministic post-checks (grounding rule) ->
+SUCCESS; else bounded repair, then SAFE FAILURE (422 AI_VALIDATION_FAILED). Unvalidated
+prose is never returned as a result.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from ..config import Settings
 from ..errors import AiProviderError, AiRateLimitedError, AiTimeoutError, AiValidationError
 from ..llm.prompts import PromptBundle, build_evidence_index, build_repair_prompt, build_risk_prompt
-from ..models.requests import RiskAnalysisRequest
+from ..models.requests import RetrievedDocumentItem, RiskAnalysisRequest
 from ..models.responses import AnalysisUsage, RiskAnalysisResponse, RiskAnalysisResult
 from ..providers.base import (
     IAIProvider,
@@ -26,16 +26,24 @@ from ..providers.base import (
     ProviderUnavailable,
     StructuredResult,
 )
+from ..retrieval.service import RetrievalService
 
 logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
-    """Orchestrates one structured reasoning call per request (no RAG yet — Phase 3)."""
+    """Orchestrates retrieval + one structured reasoning call per request."""
 
-    def __init__(self, *, provider: IAIProvider, settings: Settings):
+    def __init__(
+        self,
+        *,
+        provider: IAIProvider,
+        settings: Settings,
+        retrieval: RetrievalService | None = None,
+    ):
         self._provider = provider
         self._settings = settings
+        self._retrieval = retrieval
 
     @property
     def provider(self) -> IAIProvider:
@@ -44,6 +52,8 @@ class AnalysisService:
     async def analyze_change_risk(self, request: RiskAnalysisRequest) -> RiskAnalysisResponse:
         started = time.perf_counter()
         logger.info("analysis_started", extra={"projectId": request.project_id})
+
+        request = await self._maybe_retrieve(request)
 
         evidence_ids = set(build_evidence_index(request))
         prompt = build_risk_prompt(
@@ -66,9 +76,53 @@ class AnalysisService:
                 "latencyMs": usage.latency_ms,
                 "validationStatus": usage.validation_status,
                 "attempts": usage.repair_attempts + 1,
+                "retrieved": len(request.retrieved_documents),
             },
         )
         return RiskAnalysisResponse(analysis_type="change-risk", result=result, usage=usage)
+
+    async def _maybe_retrieve(self, request: RiskAnalysisRequest) -> RiskAnalysisRequest:
+        """Fill the evidence package with hybrid retrieval when the request lacks it.
+
+        Queries: the change summary plus changed-file basenames (exact technical terms
+        are the keyword leg's strength). Results become retrieved documents with stable
+        evidence ids `chunk:<uuid>` that the grounding rule enforces.
+        """
+        if (
+            not self._settings.ai_auto_retrieve
+            or self._retrieval is None
+            or request.retrieved_documents
+        ):
+            return request
+
+        queries = [request.change_summary]
+        for f in request.changed_files[:5]:
+            name = f.path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            if name:
+                queries.append(name)
+
+        hits = await asyncio.to_thread(
+            self._retrieval.search_queries, request.project_id, queries
+        )
+
+        request.retrieved_documents = [
+            RetrievedDocumentItem(
+                id=f"chunk:{hit.chunk_id}",
+                document_type=hit.document_type,
+                title=hit.metadata.get("title"),
+                content=hit.content,
+                metadata={
+                    "path": hit.metadata.get("path"),
+                    "service": hit.metadata.get("service"),
+                    "chunkType": hit.chunk_type,
+                    "score": hit.score,
+                },
+                score=hit.score,
+            )
+            for hit in hits
+        ]
+        logger.info("analysis_retrieved", extra={"chunks": len(request.retrieved_documents)})
+        return request
 
     async def _generate_validated(
         self, prompt: PromptBundle, evidence_ids: set[str]

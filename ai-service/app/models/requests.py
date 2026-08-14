@@ -61,6 +61,46 @@ class RunbookItem(ApiModel):
     content: str = Field(min_length=1, max_length=200_000)
 
 
+class IngestDocumentItem(ApiModel):
+    """One document to ingest (docs/ai-service-boundary.md §3 — id is backend-provided)."""
+
+    id: str = Field(min_length=1, max_length=200)
+    document_type: Literal["SourceCode", "OpenApi", "Incident", "Runbook", "DeploymentRecord"] = "Runbook"
+    repository_id: str | None = Field(default=None, max_length=200)
+    service_id: str | None = Field(default=None, max_length=200)
+    incident_id: str | None = Field(default=None, max_length=200)
+    file_path: str | None = Field(default=None, max_length=1000)
+    language: str | None = Field(default=None, max_length=50)
+    environment: str | None = Field(default=None, max_length=100)
+    title: str | None = Field(default=None, max_length=500)
+    content: str = Field(min_length=1, max_length=2_000_000)
+    content_hash: str | None = Field(default=None, max_length=128)  # advisory only
+
+
+class IngestDocumentsRequest(ApiModel):
+    project_id: str = Field(min_length=1, max_length=100)
+    documents: list[IngestDocumentItem] = Field(min_length=1, max_length=100)
+    reindex: bool = False
+
+
+class SearchFilters(ApiModel):
+    service_id: str | None = Field(default=None, max_length=300)
+    language: str | None = Field(default=None, max_length=50)
+    environment: str | None = Field(default=None, max_length=100)
+
+
+class RetrievalSearchRequest(ApiModel):
+    """Hybrid retrieval request (docs/ai-service-boundary.md §3)."""
+
+    project_id: str = Field(min_length=1, max_length=100)
+    query: str = Field(min_length=1, max_length=2000)
+    document_types: list[str] | None = Field(default=None, max_length=10)
+    filters: SearchFilters = Field(default_factory=SearchFilters)
+    strategy: Literal["hybrid", "vector", "keyword"] = "hybrid"
+    k: int = Field(default=10, ge=1, le=100)
+    embedding_model: str | None = Field(default=None, max_length=200)
+
+
 class RiskAnalysisRequest(ApiModel):
     """The evidence package the ASP.NET backend assembled (docs/ai-service-boundary.md §3)."""
 

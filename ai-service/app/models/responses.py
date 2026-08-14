@@ -137,3 +137,44 @@ class RiskAnalysisResponse(ApiModel):
     analysis_type: Literal["change-risk"] = "change-risk"
     result: RiskAnalysisResult
     usage: AnalysisUsage
+
+
+# --- retrieval / ingestion ---
+
+
+class RetrievalResultSources(ApiModel):
+    """Why a result was selected: semantic similarity and/or keyword rank (RRF is final)."""
+
+    vector: float | None = None
+    keyword: int | None = None
+
+
+class RetrievalResultItem(ApiModel):
+    chunk_id: str
+    document_id: str
+    document_type: str
+    chunk_type: str | None = None
+    source: str | None = None
+    content: str
+    metadata: dict[str, object] = Field(default_factory=dict)
+    score: float
+    sources: RetrievalResultSources = Field(default_factory=RetrievalResultSources)
+
+
+class RetrievalUsage(ApiModel):
+    queries: list[str] = Field(default_factory=list)
+    latency_ms: int | None = None
+    tokens: dict[str, int] = Field(default_factory=dict)
+    strategy: str = "hybrid"
+
+
+class RetrievalSearchResponse(ApiModel):
+    results: list[RetrievalResultItem] = Field(default_factory=list)
+    usage: RetrievalUsage = Field(default_factory=RetrievalUsage)
+
+
+class IngestResponse(ApiModel):
+    document_ids: list[str] = Field(default_factory=list)
+    chunk_count: int = 0
+    skipped: int = 0
+    errors: list[dict[str, object]] = Field(default_factory=list)

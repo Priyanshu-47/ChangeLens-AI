@@ -1,21 +1,37 @@
 # ai-service — Python FastAPI AI Service
 
-> **Phase 2 — complete.** FastAPI + Gemini structured-output service: provider abstraction, versioned layered prompts, Pydantic validation with bounded repair and safe failure, grounding enforcement, correlation-id tracing, internal-key auth, mock provider for $0 dev/tests.
+> **Phase 3 — complete.** FastAPI + Gemini structured-output service with hybrid RAG: provider abstraction, versioned layered prompts, Pydantic validation with bounded repair and safe failure, grounding enforcement, correlation-id tracing, internal-key auth, mock providers for $0 dev/tests, idempotent ingestion, structure-aware chunking, pgvector embeddings, and RRF hybrid retrieval feeding the analysis pipeline.
 
-The AI capability provider of ChangeLens. It owns AI integration (providers, prompts, structured output, AI-specific validation) and — in later phases — ingestion, embeddings, retrieval, and evaluation. It **never** owns users, projects, incidents, authorization, or business state; the ASP.NET backend is the only client ([docs/ai-service-boundary.md](../docs/ai-service-boundary.md), [ADR-0002](../docs/adr/0002-service-boundary.md)).
+The AI capability provider of ChangeLens. It owns AI integration (providers, prompts, structured output, AI-specific validation) and the `ai` schema (ingestion, embeddings, retrieval). It **never** owns users, projects, incidents, authorization, or business state; the ASP.NET backend is the only client ([docs/ai-service-boundary.md](../docs/ai-service-boundary.md), [ADR-0002](../docs/adr/0002-service-boundary.md)).
 
 ## Architecture
 
 ```text
 ASP.NET Core  ── POST /internal/v1/analysis/risk (X-Internal-Key, X-Correlation-ID) ──▶  FastAPI
                                                                                           │
-                                                                                          ▼
-                                                                            IAIProvider (Protocol)
-                                                                              ├── GeminiProvider  (google-genai, structured outputs)
-                                                                              └── MockAIProvider  (deterministic, AI_PROVIDER=mock)
+                                                    ┌───────────────────────────────────┘
+                                                    ▼
+                                            RetrievalService (hybrid)
+                                             vector (pgvector)  +  keyword (FTS)  →  RRF
+                                                    │                │
+                                                    ▼                ▼
+                                            ai schema (PostgreSQL): documents · chunks · embeddings
+                                                    │
+                                                    ▼
+                                            IAIProvider (Protocol)
+                                              ├── GeminiProvider  (google-genai, structured outputs)
+                                              └── MockAIProvider  (deterministic, AI_PROVIDER=mock)
 ```
 
-The pipeline per analysis: layered prompt → provider call → Pydantic validation → deterministic post-checks (confidence bounds, array caps, **grounding rule**) → success, or bounded repair (max 2) → safe failure (`422 AI_VALIDATION_FAILED`) — unvalidated prose is never returned ([ADR-0007](../docs/adr/0007-structured-output-schema-validation.md)).
+The pipeline per analysis: change request → **hybrid retrieval (auto)** → evidence package (`chunk:<uuid>` ids) → layered prompt → provider call → Pydantic validation → deterministic post-checks (confidence bounds, array caps, **grounding rule**) → success, or bounded repair (max 2) → safe failure (`422 AI_VALIDATION_FAILED`) — unvalidated prose is never returned ([ADR-0007](../docs/adr/0007-structured-output-schema-validation.md)).
+
+## Phase 3 subsystems
+
+- **Ingestion** (`POST /internal/v1/ingest/documents`): `document → normalize → sha256 → structure-aware chunking → persist chunks → batch embeddings → persist vectors`. Idempotent: unchanged content skips re-chunk/re-embed; changed content re-chunks (old chunks cascade); stale embedding model re-embeds only. Batch embedding failures are reported per chunk and retried on the next ingest — never silently dropped.
+- **Chunking** (`app/chunking/`): tree-sitter for code (csharp/javascript/typescript/python → Class/Interface/Method/Constructor/Property chunks with namespace+class metadata; unknown languages get one honest File chunk), heading-aware section chunkers for incidents and runbooks. Never fixed-N splits.
+- **Embeddings** (`app/embeddings/`): `IEmbeddingProvider` protocol, `GeminiEmbeddingProvider` (default `text-embedding-004`, 768-dim, configurable) and deterministic `MockEmbeddingProvider` (gram-overlap vectors, $0). Dimension validated per vector; embedding calls happen only during ingestion and query-time search — never at startup or on health.
+- **Retrieval** (`app/retrieval/`): vector leg (pgvector cosine, HNSW), keyword leg (PostgreSQL FTS over generated `content_tsv`, `simple` config — exact technical terms like `TimeoutException`/`401`/`JWT`), optional metadata filters (`documentType`, `serviceId`, `language`, `environment`), merged via configurable RRF (`RRF_K=60`). `project_id` is a hard server-side filter inside every SQL statement. Results carry per-source scores (`vector` similarity, `keyword` rank) so the UI can explain *why* a result surfaced.
+- **Schema** (`ai` only, ADR-0003): migrated by Alembic (`alembic upgrade head` runs at container start); pgvector extension + HNSW index + GIN tsvector index created by the initial migration.
 
 ## Prerequisites
 
@@ -61,6 +77,15 @@ All config is environment-driven (`pydantic-settings`, validated at startup — 
 | `AI_MAX_REPAIR_ATTEMPTS` | no | 2 | Bounded structured-output repair |
 | `AI_READINESS_PROBE` | no | `false` | `true` resolves the model name on `/ready` (metadata call). Off ⇒ health/readiness cost zero Gemini |
 | `AI_MAX_EVIDENCE_CHARS` | no | 120000 | Token-budget trim for rendered evidence |
+| `AI_AUTO_RETRIEVE` | no | `true` | Auto-run hybrid retrieval when the request has no retrieved documents |
+| `DATABASE_URL` | no | local dev default | `postgresql+psycopg://...` — the `ai` schema lives here |
+| `EMBEDDING_PROVIDER` | no | `gemini` | `gemini` or `mock` (deterministic vectors, $0) |
+| `GEMINI_EMBEDDING_MODEL` | no | `text-embedding-004` | Embedding model; must match `EMBEDDING_DIMENSION` |
+| `EMBEDDING_DIMENSION` | no | 768 | Vector column dimension; changing the model ⇒ migration + re-index |
+| `EMBEDDING_BATCH_SIZE` | no | 32 | Embedding requests are batched (never one request per chunk) |
+| `RETRIEVAL_TOP_K` | no | 10 | Final result count |
+| `RETRIEVAL_CANDIDATE_K` | no | 50 | Per-leg candidate count before fusion |
+| `RRF_K` | no | 60 | Reciprocal Rank Fusion parameter (config, not code) |
 | `LOG_LEVEL` | no | `INFO` | |
 
 ## Endpoints
@@ -68,10 +93,12 @@ All config is environment-driven (`pydantic-settings`, validated at startup — 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | GET | `/health` | — | Liveness (process up, no Gemini) |
-| GET | `/ready` | — | Readiness (config valid; probe only if `AI_READINESS_PROBE=true`) |
+| GET | `/ready` | — | Readiness (config + DB reachability + vector extension; probe only if `AI_READINESS_PROBE=true`) |
 | GET | `/internal/v1/health/live` | internal key | Liveness (internal contract) |
 | GET | `/internal/v1/health/ready` | internal key | Readiness (internal contract) |
-| POST | `/internal/v1/analysis/risk` | internal key | Structured change-risk analysis over an evidence package |
+| POST | `/internal/v1/analysis/risk` | internal key | Structured change-risk analysis over an evidence package (RAG-fed) |
+| POST | `/internal/v1/ingest/documents` | internal key | Idempotent ingestion (content + metadata, never filesystem access) |
+| POST | `/internal/v1/retrieval/search` | internal key | Hybrid retrieval: vector + keyword + filters + RRF |
 
 Swagger/OpenAPI: `http://localhost:8000/docs` (public routes) — the internal routes require the `X-Internal-Key` + `X-Contract-Version: 1` headers.
 
@@ -94,28 +121,56 @@ Then from the backend: `POST /api/v1/analyses/change-risk` with a JWT (see [back
 
 ```bash
 cd ai-service
-.venv/Scripts/python -m pytest -q          # 57 tests — ZERO Gemini calls, no API key needed
+.venv/Scripts/python -m pytest -q          # 88 tests — ZERO Gemini calls, no API key, no database needed
 ```
 
-Coverage: config validation, model validation (enums/bounds), grounding rule, prompt layering + injection sanitizer, bounded repair + safe failure, retry semantics, error mapping, HTTP contract (auth, correlation, envelopes), and the deterministic mock end-to-end.
+Coverage: config validation, model validation (enums/bounds), grounding rule, prompt layering + injection sanitizer, bounded repair + safe failure, retry semantics, error mapping, HTTP contract (auth, correlation, envelopes), structure-aware chunkers, RRF determinism, mock-embedding determinism + similarity, content hashing.
 
-Optional **live Gemini smoke test** (one minimal structured-output call — protects free-tier quota, off by default):
+The **PostgreSQL integration suite** (pgvector required — idempotency, content change, vector/keyword/metadata/hybrid retrieval, project isolation) runs only when pointed at a real database:
+
+```bash
+TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
+  .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # 8 tests
+```
+
+Optional **live Gemini smoke tests** (one structured-output call + one embedding call — off by default, protects free-tier quota):
 
 ```bash
 RUN_GEMINI_TESTS=true GEMINI_API_KEY=<your key> .venv/Scripts/python -m pytest tests/test_gemini_live.py -v -s
 ```
 
+## Seeding the demo corpus
+
+```bash
+# Idempotent: re-running with unchanged files makes ZERO embedding calls and reports SKIPPED.
+DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" \
+EMBEDDING_PROVIDER=mock AI_PROVIDER=mock INTERNAL_API_KEY=change-me-internal-key \
+  .venv/Scripts/python scripts/seed_demo.py
+```
+
+Ingests `data/demo-repository` (24 C# files), `data/demo-incidents` (20), and `data/demo-runbooks` (5) → 49 documents / 247 chunks / 247 vectors under `project_id=demo-project`.
+
+## Migrations
+
+```bash
+DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" .venv/Scripts/python -m alembic upgrade head
+```
+
+Migrations touch the `ai` schema only (ADR-0003); the `app` schema belongs to .NET. The vector extension is created idempotently by the bootstrap.
+
 ## Provider abstraction
 
-`app/providers/base.py` defines the `IAIProvider` protocol; `GeminiProvider` is the MVP adapter and `MockAIProvider` the deterministic stand-in. The analysis service depends only on the protocol, so an `OpenAIProvider`/`BedrockProvider` can be added without touching orchestration or validation ([ADR-0005](../docs/adr/0005-llm-provider-abstraction.md)). The protocol currently declares only capabilities with consumers — `embed_texts` joins in Phase 3 when embeddings exist.
+`app/providers/base.py` defines the `IAIProvider` protocol; `GeminiProvider` is the MVP adapter and `MockAIProvider` the deterministic stand-in. The analysis service depends only on the protocol, so an `OpenAIProvider`/`BedrockProvider` can be added without touching orchestration or validation ([ADR-0005](../docs/adr/0005-llm-provider-abstraction.md)). Embeddings use the separate `IEmbeddingProvider` protocol (`app/embeddings/base.py`, ADR-0006) with `GeminiEmbeddingProvider` and `MockEmbeddingProvider` implementations.
 
-## Known limitations (Phase 2)
+## Known limitations (Phase 3)
 
-- **No RAG yet** (Phase 3): the analysis endpoint receives its evidence package directly in the request.
-- **No persistence**: analysis runs / results are not stored (Phase 4 adds `analysis_runs` and result tables in the backend).
+- **No reranker** — intentionally not implemented (MVP = RRF; revisit only if evaluation shows RRF insufficient, docs/rag-architecture.md §4).
+- **No dependency-relationship retrieval leg** — the evidence-id interface exists, but the dependency contribution is empty until the Roslyn analyzer populates it (Phase 4).
+- **No analysis persistence** — `analysis_runs` and result tables are Phase 4 (backend).
 - **Incident investigation** (`/internal/v1/analysis/incident`) is Phase 4.
-- **Costs**: token counts come from Gemini usage metadata when present; cost estimates only when per-model pricing env vars are configured.
-- The `app` schema / DB is not used by this service yet — Phase 3 introduces the `ai` schema.
+- **Structured incident fields, OpenAPI/JSON/YAML chunkers, identifier-aware tokenizer** for the keyword leg — deferred to Phase 4; unknown document types fall back to heading sections / one file chunk today.
+- **No measured retrieval accuracy** — the golden dataset (`data/golden-dataset/cases.json`) defines targets; the evaluation runner lands in Phase 7.
+- The `app` schema is never touched by this service (ADR-0003).
 
 ## Key references
 

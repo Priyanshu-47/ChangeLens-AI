@@ -70,7 +70,9 @@ def build_evidence_index(request: RiskAnalysisRequest) -> list[str]:
     for a in request.api_contracts:
         ids.append(f"api:{a.id}")
     for d in request.retrieved_documents:
-        ids.append(f"doc:{d.id}")
+        # The retrieved document's own id IS the evidence id (chunk:<uuid> in Phase 3,
+        # doc:<backend id> once Phase 4 persists documents) — reference it verbatim.
+        ids.append(d.id)
     for i in request.historical_incidents:
         ids.append(f"incident:{i.incident_id}")
     for r in request.runbooks:
@@ -141,7 +143,7 @@ def _render_user_section(request: RiskAnalysisRequest, *, max_evidence_chars: in
     # configured character budget. Truncation is a decision with metadata, not a surprise.
     evidence_items: list[tuple[str, str, str, float | None]] = []  # (id, type, content, score)
     for d in request.retrieved_documents:
-        evidence_items.append((f"doc:{d.id}", d.document_type, d.content, d.score))
+        evidence_items.append((d.id, d.document_type, d.content, d.score))
     for i in request.historical_incidents:
         evidence_items.append(
             (f"incident:{i.incident_id}", "HistoricalIncident", i.summary or i.reference or "", None)
