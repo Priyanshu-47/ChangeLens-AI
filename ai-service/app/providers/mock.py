@@ -71,7 +71,9 @@ class MockAIProvider:
         )
 
     def _build_result(self, evidence_ids: list[str]) -> RiskAnalysisResult:
+        # Grounded by construction: factors reference ids that ARE in the evidence index.
         change_ids = [eid for eid in evidence_ids if eid.startswith("change:")]
+        chunk_ids = [eid for eid in evidence_ids if eid.startswith("chunk:")]
         factors: list[RiskFactor] = []
         evidence: list[EvidenceItem] = []
         components: list[ImpactedComponent] = []
@@ -102,6 +104,23 @@ class MockAIProvider:
                     severity=RiskLevel.MEDIUM,
                     evidence=[EvidenceReference(type=EvidenceType.ChangedFile, reference=eid)],
                 )
+            )
+
+        # Retrieved evidence (Phase 3): the top chunk is surfaced as a Document
+        # evidence item and referenced by the first factor, so the retrieval -> analysis
+        # chain is observable even with the deterministic mock provider.
+        if chunk_ids and factors:
+            top = chunk_ids[0]
+            evidence.append(
+                EvidenceItem(
+                    id=top,
+                    type=EvidenceType.Document,
+                    reference=top,
+                    summary="Retrieved evidence relevant to this change (hybrid retrieval).",
+                )
+            )
+            factors[0].evidence.append(
+                EvidenceReference(type=EvidenceType.Document, reference=top)
             )
 
         return RiskAnalysisResult(

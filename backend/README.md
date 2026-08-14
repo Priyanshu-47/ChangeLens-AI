@@ -1,6 +1,6 @@
 # backend — ChangeLens API (ASP.NET Core 10)
 
-> **Phase 2 — complete (Phase 1 backend + AI vertical slice).** ASP.NET Core 10 Web API foundation: Identity + JWT auth, project-level authorization, projects/repositories/services/incidents, audit log, health checks, Swagger/OpenAPI, EF Core migrations against PostgreSQL — plus a typed client for the Python AI service and the `POST /api/v1/analyses/change-risk` vertical slice. 125 tests.
+> **Phase 3 — complete (backend + AI vertical slice, RAG-fed).** ASP.NET Core 10 Web API foundation: Identity + JWT auth, project-level authorization, projects/repositories/services/incidents, audit log, health checks, Swagger/OpenAPI, EF Core migrations against PostgreSQL — plus a typed client for the Python AI service and the `POST /api/v1/analyses/change-risk` vertical slice, which since Phase 3 is **RAG-fed**: the AI service auto-runs hybrid retrieval against the `ai` schema when the request carries no retrieved documents. 125 tests.
 
 The orchestrator of ChangeLens AI: it owns authentication, the domain model, workflow orchestration (later phases), persistence (`app` schema), and the audit trail. It never calls Gemini directly — the Python AI service is its only AI-facing dependency (`.NET → FastAPI → Gemini`).
 
@@ -57,7 +57,7 @@ dotnet ef migrations list          # shows 20260814171123_InitialCreate
 dotnet ef database update          # applies pending migrations to the configured DB
 ```
 
-The `app` schema is owned by EF Core; the future `ai` schema is owned by the Python AI service (ADR-0003).
+The `app` schema is owned by EF Core; the `ai` schema (documents, chunks, embeddings, pgvector) is owned by the Python AI service (ADR-0003) and migrated by Alembic on that side — never by EF.
 
 ## Run
 
@@ -127,4 +127,4 @@ Errors use the uniform envelope: `{ type, title, status, detail, traceId, code }
 
 ## Current phase
 
-Phase 2 of 10. See [docs/development-sequence.md](../docs/development-sequence.md). Not yet implemented: RAG (Phase 3), change parsing/dependency analysis + async job runner + result persistence (Phase 4), React UI (Phase 5), agent tools (Phase 6), evaluation (Phase 7), observability/rate limiting (Phase 8), CI/CD (Phase 9).
+Phase 3 of 10. See [docs/development-sequence.md](../docs/development-sequence.md). Phase 3 (hybrid RAG) lives in the Python AI service — see [ai-service/README.md](../ai-service/README.md). Not yet implemented: change parsing/dependency analysis + async job runner + result persistence (Phase 4), React UI (Phase 5), agent tools (Phase 6), evaluation (Phase 7), observability/rate limiting (Phase 8), CI/CD (Phase 9).

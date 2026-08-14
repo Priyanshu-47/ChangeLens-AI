@@ -11,14 +11,14 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 
 ## Status
 
-**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL, and the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output (mock provider in tests/local dev; live Gemini behind `GEMINI_API_KEY`). See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
+**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; and Phase 3 adds a real RAG pipeline: structure-aware chunking (tree-sitter), deterministic + Gemini embeddings, pgvector in the `ai` schema, and RRF hybrid retrieval feeding the analysis endpoint with grounding enforcement (mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`). See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
 | 0 | Architecture, ADRs, domain model, API contract, repo structure | ✅ Complete |
 | 1 | ASP.NET Core API + PostgreSQL + EF Core foundation | ✅ Complete |
 | 2 | FastAPI AI service + Gemini provider | ✅ Complete |
-| 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ⏳ Pending |
+| 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ✅ Complete |
 | 4 | Change analysis workflow | ⏳ Pending |
 | 5 | React UI | ⏳ Pending |
 | 6 | Agent tools + tool tracing | ⏳ Pending |
@@ -96,12 +96,24 @@ changelens-ai/
    cd backend
    dotnet ef database update --project src/ChangeLens.Infrastructure --startup-project src/ChangeLens.Api
    cd src/ChangeLens.Api && dotnet run   # http://localhost:5000/swagger
+   # AI service: the ai schema migration runs automatically in Docker (alembic upgrade head);
+   # natively: cd ai-service && DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" \
+   #   .venv/Scripts/python -m alembic upgrade head
    ```
-4. Run the tests:
+4. Seed the demo corpus (optional but recommended):
+   ```bash
+   cd ai-service
+   DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" \
+   EMBEDDING_PROVIDER=mock AI_PROVIDER=mock INTERNAL_API_KEY=change-me-internal-key \
+     .venv/Scripts/python scripts/seed_demo.py
+   ```
+5. Run the tests:
    ```bash
    cd backend && dotnet test tests/ChangeLens.UnitTests
    CHANGELENS_TEST_CONNECTION_STRING="…test connection string…" dotnet test tests/ChangeLens.Api.IntegrationTests
-   cd ../ai-service && .venv/Scripts/python -m pytest -q   # zero Gemini calls
+   cd ../ai-service && .venv/Scripts/python -m pytest -q   # 88 tests, zero Gemini calls, no DB needed
+   TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
+     .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # pgvector integration tests
    ```
 
-Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md). The four-service `docker compose up` (adding the React frontend) is a Phase 9 goal — the Phase 2 compose already runs postgres + ai-service + backend.
+Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md). The four-service `docker compose up` (adding the React frontend) is a Phase 9 goal — the Phase 3 compose already runs postgres (pgvector image) + ai-service + backend.

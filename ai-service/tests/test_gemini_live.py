@@ -63,3 +63,34 @@ async def test_live_gemini_structured_risk_analysis():
     assert response.usage.model
     print(f"\nLIVE SMOKE OK model={response.usage.model} "
           f"tokens={response.usage.total_tokens} latency={response.usage.latency_ms}ms")
+
+
+@pytest.mark.asyncio
+async def test_live_gemini_embedding_dimension():
+    """Real embedding call: prove the configured model + dimension contract."""
+    from app.embeddings import GeminiEmbeddingProvider
+
+    settings = Settings(
+        internal_api_key="test-internal-key",
+        ai_provider="gemini",
+        gemini_api_key=os.environ["GEMINI_API_KEY"],
+        embedding_provider="gemini",
+        gemini_embedding_model=os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+    )
+    provider = GeminiEmbeddingProvider(
+        api_key=settings.gemini_api_key or "",
+        model=settings.gemini_embedding_model,
+        dimension=settings.embedding_dimension,
+        batch_size=settings.embedding_batch_size,
+        timeout_seconds=settings.gemini_timeout_seconds,
+        max_retries=settings.embedding_batch_max_retries,
+    )
+
+    result = provider.embed_texts(["retry the payment gateway", "JWT signing key rotation"])
+
+    assert len(result.vectors) == 2
+    assert all(len(v) == provider.dimension for v in result.vectors)
+    assert result.model == provider.model
+    assert result.model_version == provider.model_version
+    print(f"\nLIVE EMBEDDING OK model={provider.model} dim={provider.dimension} "
+          f"tokens={result.input_tokens}")

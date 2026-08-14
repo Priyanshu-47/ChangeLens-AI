@@ -1,0 +1,175 @@
+{
+  "schema_version": "1.0",
+  "description": "ChangeLens Phase 3 golden dataset. Synthetic evaluation data; no real production incidents. Used by the retrieval evaluation phase to compare keyword-only, vector-only, and hybrid RRF baselines. No metrics are claimed — this file defines the dataset only.",
+  "difficulty_distribution": { "easy": 5, "medium": 10, "ambiguous": 5 },
+  "archetype_distribution": {
+    "authentication": 4,
+    "external_integration": 4,
+    "database_schema": 4,
+    "configuration_drift": 3,
+    "retry_timeout": 3,
+    "api_contract": 2
+  },
+  "cases": [
+    {
+      "id": "case-001",
+      "archetype": "authentication",
+      "difficulty": "easy",
+      "query": "Partners suddenly get 401 invalid signature after a key rotation; how do we rotate the JWT signing key without dropping in-flight tokens?",
+      "expected_evidence": ["TokenService.cs", "authentication-failure.md", "auth-001-jwt-key-rotation.md"],
+      "notes": "Signing key rotation must keep the previous key in the history list."
+    },
+    {
+      "id": "case-002",
+      "archetype": "authentication",
+      "difficulty": "easy",
+      "query": "A partner integration returns 401 api_key_missing on every request. What header does the AcmePay API require and where is it validated?",
+      "expected_evidence": ["ApiKeyAuthMiddleware.cs", "auth-002-missing-api-key.md"],
+      "notes": "X-Api-Key header required by ApiKeyAuthMiddleware on payment routes."
+    },
+    {
+      "id": "case-003",
+      "archetype": "authentication",
+      "difficulty": "medium",
+      "query": "Refunds started returning 403 refunds_not_allowed for one partner. Where is refund permission decided and how is CanRefund determined?",
+      "expected_evidence": ["ApiKeyValidator.cs", "ApiKeyAuthMiddleware.cs", "auth-003-refund-permission-denied.md"],
+      "notes": "ApiKeyValidator seed data sets CanRefund per partner; middleware enforces on /refunds paths."
+    },
+    {
+      "id": "case-004",
+      "archetype": "authentication",
+      "difficulty": "ambiguous",
+      "query": "Security review says the API-key middleware path matching may not agree with ASP.NET routing for uppercase paths. Is there a real bypass?",
+      "expected_evidence": ["ApiKeyAuthMiddleware.cs", "auth-004-auth-bypass-path-casing.md"],
+      "notes": "Middleware used StartsWith with OrdinalIgnoreCase; routing normalizes differently."
+    },
+    {
+      "id": "case-005",
+      "archetype": "external_integration",
+      "difficulty": "medium",
+      "query": "All charges failing with 502 gateway_unavailable; gateway status page shows an outage. Why does the API keep failing even though retries are configured?",
+      "expected_evidence": ["StripeGatewayClient.cs", "ErrorHandlingMiddleware.cs", "ext-001-gateway-502.md", "payment-timeout.md"],
+      "notes": "Bounded retries exhaust during a prolonged upstream outage; 502 mapping in ErrorHandlingMiddleware."
+    },
+    {
+      "id": "case-006",
+      "archetype": "external_integration",
+      "difficulty": "medium",
+      "query": "Intermittent 504 Gateway request timed out on charges; p99 latency spiked to 12s. How is the gateway timeout configured and what should it be?",
+      "expected_evidence": ["StripeGatewayClient.cs", "PaymentGatewayOptions.cs", "ext-002-gateway-timeout-504.md"],
+      "notes": "PaymentGatewayOptions.TimeoutSeconds; tune above upstream p99."
+    },
+    {
+      "id": "case-007",
+      "archetype": "external_integration",
+      "difficulty": "ambiguous",
+      "query": "Gateway starts returning 429s during a traffic spike and retries make it worse. Should the client retry 429s and how?",
+      "expected_evidence": ["StripeGatewayClient.cs", "ext-003-429-throttling.md", "payment-timeout.md"],
+      "notes": "Retry-After and load shaping; 429 vs 5xx distinction."
+    },
+    {
+      "id": "case-008",
+      "archetype": "external_integration",
+      "difficulty": "medium",
+      "query": "Weekly payout batch fails with 400 after the gateway renamed a JSON field. Where is the payout request serialized?",
+      "expected_evidence": ["PayoutGatewayClient.cs", "ext-004-payout-contract-change.md"],
+      "notes": "JsonPropertyName merchant_id -> merchant_ref; recorded-response contract tests."
+    },
+    {
+      "id": "case-009",
+      "archetype": "database_schema",
+      "difficulty": "medium",
+      "query": "EF Core migration adding a non-nullable column to the payments table fails on production data. What is the safe migration pattern?",
+      "expected_evidence": ["PaymentDbContext.cs", "database-migration.md", "db-001-non-nullable-migration.md"],
+      "notes": "Add nullable -> backfill -> set NOT NULL."
+    },
+    {
+      "id": "case-010",
+      "archetype": "database_schema",
+      "difficulty": "medium",
+      "query": "Merchant payments list query got slow as the table grew; EXPLAIN shows a sequential scan on merchant_id. Why is the declared index missing in production?",
+      "expected_evidence": ["PaymentDbContext.cs", "PaymentsRepository.cs", "db-002-missing-index.md"],
+      "notes": "HasIndex in the model is not a migration; schema drift."
+    },
+    {
+      "id": "case-011",
+      "archetype": "database_schema",
+      "difficulty": "ambiguous",
+      "query": "During a network partition the API started failing with connection pool timeout and stayed broken after the database recovered. What happened and what fixes it?",
+      "expected_evidence": ["db-003-connection-pool-exhaustion.md", "connection-pool-exhaustion.md"],
+      "notes": "Pool drains during partition; lazy refill after recovery; hold time reduction."
+    },
+    {
+      "id": "case-012",
+      "archetype": "database_schema",
+      "difficulty": "easy",
+      "query": "Some succeeded payments show as Pending in the dashboard after an enum conversion deploy. What changed the status values?",
+      "expected_evidence": ["PaymentStatus.cs", "PaymentDbContext.cs", "db-004-status-enum-drift.md"],
+      "notes": "HasConversion<string>() plus a typo in the data migration lookup."
+    },
+    {
+      "id": "case-013",
+      "archetype": "configuration_drift",
+      "difficulty": "ambiguous",
+      "query": "Changing the staging gateway timeout and retry settings in appsettings.Staging.json has no effect. Which options class does the gateway client actually read?",
+      "expected_evidence": ["PaymentGatewayOptions.cs", "ResilienceOptions.cs", "appsettings.Staging.json", "cfg-001-staging-timeout-ignored.md"],
+      "notes": "Two option classes; client reads PaymentGateway section, staging edits Resilience section."
+    },
+    {
+      "id": "case-014",
+      "archetype": "configuration_drift",
+      "difficulty": "medium",
+      "query": "Staging started writing to the production database after a credentials rotation. How can the API guard against the wrong environment database?",
+      "expected_evidence": ["appsettings.json", "cfg-002-connection-string-drift.md"],
+      "notes": "Startup guard validating environment/database pairing."
+    },
+    {
+      "id": "case-015",
+      "archetype": "configuration_drift",
+      "difficulty": "easy",
+      "query": "Refund endpoint returns 404 in staging but works locally and in production. What environment setting can disable a route?",
+      "expected_evidence": ["appsettings.Staging.json", "cfg-003-feature-flag-refund.md"],
+      "notes": "FeatureFlags.EnableRefunds gates route registration."
+    },
+    {
+      "id": "case-016",
+      "archetype": "retry_timeout",
+      "difficulty": "medium",
+      "query": "A 2-minute gateway blip caused a 30-minute retry storm with charge volume at 14x normal. What is missing from the retry policy?",
+      "expected_evidence": ["StripeGatewayClient.cs", "ret-001-retry-storm.md", "payment-timeout.md"],
+      "notes": "Jitter, circuit breaker, retry-rate limiting for shared failures."
+    },
+    {
+      "id": "case-017",
+      "archetype": "retry_timeout",
+      "difficulty": "ambiguous",
+      "query": "A customer was charged twice after a timeout: the retry sent a new idempotency key. Where is the idempotency key generated and why is that a bug?",
+      "expected_evidence": ["StripeGatewayClient.cs", "ProcessPaymentHandler.cs", "ret-002-duplicate-charge.md"],
+      "notes": "Guid.NewGuid() inside the retried callable defeats gateway deduplication."
+    },
+    {
+      "id": "case-018",
+      "archetype": "retry_timeout",
+      "difficulty": "medium",
+      "query": "Deploys hang because in-flight refund requests don't abort during graceful shutdown. Which handler fails to propagate the cancellation token?",
+      "expected_evidence": ["RefundPaymentHandler.cs", "RefundsController.cs", "ret-003-cancellation-swallowed.md"],
+      "notes": "CancellationToken not threaded from controller to gateway call."
+    },
+    {
+      "id": "case-019",
+      "archetype": "api_contract",
+      "difficulty": "medium",
+      "query": "A partner refunding $50 got $0.50 back. The refund amount contract changed units without a version bump. How should money amounts be transmitted?",
+      "expected_evidence": ["RefundPaymentCommand.cs", "RefundsController.cs", "api-001-refund-contract-cents.md", "api-schema-mismatch.md"],
+      "notes": "Cents-as-integer or annotated units; breaking change policy."
+    },
+    {
+      "id": "case-020",
+      "archetype": "api_contract",
+      "difficulty": "easy",
+      "query": "A partner's strict JSON deserializer broke when decline_reason was removed from the payment response. What is the safe way to remove a response field?",
+      "expected_evidence": ["PaymentResult.cs", "PaymentsController.cs", "api-002-removed-field.md"],
+      "notes": "Serialize as null during deprecation window; contract snapshot tests."
+    }
+  ]
+}

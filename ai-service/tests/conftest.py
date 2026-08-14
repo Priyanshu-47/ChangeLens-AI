@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Safe env defaults so importing app.main (which builds the ASGI app from env) is harmless.
 os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")
 os.environ.setdefault("AI_PROVIDER", "mock")
+os.environ.setdefault("EMBEDDING_PROVIDER", "mock")
 os.environ.setdefault("GEMINI_TEXT_MODEL", "gemini-3.7-flash")
 
 import pytest  # noqa: E402
@@ -30,6 +31,10 @@ def make_settings(**overrides) -> Settings:
     base = {
         "internal_api_key": TEST_INTERNAL_KEY,
         "ai_provider": "mock",
+        "embedding_provider": "mock",
+        # Unit tests never touch the database: retrieval must stay OFF unless an
+        # integration test explicitly turns it on with a real pgvector database.
+        "ai_auto_retrieve": False,
         "ai_max_repair_attempts": 2,
     }
     base.update(overrides)

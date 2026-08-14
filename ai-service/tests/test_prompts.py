@@ -52,7 +52,9 @@ def test_evidence_index_contains_all_id_kinds():
     assert "change:src/AuthClient.cs" in ids
     assert "component:c1" in ids
     assert "api:a1" in ids
-    assert "doc:d1" in ids
+    # Phase 3: the retrieved document's own id IS the evidence id (chunk:<uuid>
+    # in production) — referenced verbatim, never re-prefixed.
+    assert "d1" in ids
     assert "incident:INC-182" in ids
     assert "runbook:rb1" in ids
 
@@ -64,7 +66,7 @@ def test_prompt_marks_evidence_as_data():
         ]
     )
     user = build_risk_prompt(request).messages[0]["content"]
-    assert '<evidence id="doc:d1" type="Runbook">' in user
+    assert '<evidence id="d1" type="Runbook">' in user
     assert "DATA" in user
 
 

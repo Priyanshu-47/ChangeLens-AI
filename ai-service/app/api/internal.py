@@ -15,9 +15,10 @@ from fastapi import APIRouter, Depends, Header, Request
 
 from ..config import Settings
 from ..errors import ContractVersionError, InternalAuthError
-from ..models.requests import RiskAnalysisRequest
-from ..models.responses import RiskAnalysisResponse
+from ..models.requests import IngestDocumentsRequest, RetrievalSearchRequest, RiskAnalysisRequest
+from ..models.responses import IngestResponse, RetrievalSearchResponse, RiskAnalysisResponse
 from ..providers.base import IAIProvider
+from ..retrieval.service import RetrievalService
 from ..services.analysis_service import AnalysisService
 from ..services.readiness import probe_model, readiness_payload
 
@@ -73,3 +74,33 @@ async def analyze_risk(
     request: RiskAnalysisRequest, fastapi_request: Request
 ) -> RiskAnalysisResponse:
     return await _analysis_service(fastapi_request).analyze_change_risk(request)
+
+
+@router.post(
+    "/ingest/documents",
+    response_model=IngestResponse,
+    dependencies=[Depends(require_internal_auth)],
+)
+def ingest_documents(
+    request: IngestDocumentsRequest, fastapi_request: Request
+) -> IngestResponse:
+    """Controlled ingestion: raw content + metadata, never filesystem access.
+
+    Synchronous for MVP scale (brief §39); the response shape matches the Phase 0
+    contract. Idempotent: unchanged content returns skipped without re-embedding.
+    """
+    service = fastapi_request.app.state.ingestion_service
+    result = service.ingest(request)
+    return IngestResponse(**result.to_dict())
+
+
+@router.post(
+    "/retrieval/search",
+    response_model=RetrievalSearchResponse,
+    dependencies=[Depends(require_internal_auth)],
+)
+def retrieval_search(
+    request: RetrievalSearchRequest, fastapi_request: Request
+) -> RetrievalSearchResponse:
+    service: RetrievalService = fastapi_request.app.state.retrieval_service
+    return service.search(request)
