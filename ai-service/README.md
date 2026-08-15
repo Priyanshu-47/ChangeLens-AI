@@ -69,7 +69,7 @@ All config is environment-driven (`pydantic-settings`, validated at startup — 
 | `INTERNAL_API_KEY` | yes | — | Shared secret; the backend sends it as `X-Internal-Key`. Min 8 chars |
 | `AI_PROVIDER` | no | `gemini` | `gemini` or `mock` (deterministic stand-in, no key needed) |
 | `GEMINI_API_KEY` | when provider=gemini | — | Free tier; never committed |
-| `GEMINI_TEXT_MODEL` | no | `gemini-3.7-flash` | Config, not code ([ADR-0005](../docs/adr/0005-llm-provider-abstraction.md)) |
+| `GEMINI_TEXT_MODEL` | no | `gemini-3.1-flash-lite` | Config, not code ([ADR-0005](../docs/adr/0005-llm-provider-abstraction.md)) |
 | `GEMINI_TIMEOUT_SECONDS` | no | 60 | Provider call timeout |
 | `GEMINI_MAX_RETRIES` | no | 3 | Retries only on 429/5xx, exponential backoff + jitter |
 | `GEMINI_MAX_OUTPUT_TOKENS` | no | 8192 | Cost/latency bound |

@@ -137,7 +137,7 @@
   "status": "RUNNING",
   "progress": { "step": "retrieval", "detail": "semantic search" },
   "result": { "kind": "RiskReport", "id": "…" },
-  "model": "gemini-3.7-flash",
+  "model": "gemini-3.1-flash-lite",
   "promptVersion": "risk-v3",
   "startedAt": "…",
   "completedAt": null,

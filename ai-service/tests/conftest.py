@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")
 os.environ.setdefault("AI_PROVIDER", "mock")
 os.environ.setdefault("EMBEDDING_PROVIDER", "mock")
-os.environ.setdefault("GEMINI_TEXT_MODEL", "gemini-3.7-flash")
+os.environ.setdefault("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

@@ -111,7 +111,7 @@ def test_analysis_with_mock_provider_returns_validated_result(client):
     assert payload["result"]["riskLevel"] in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
     assert 0.0 <= payload["result"]["confidence"] <= 1.0
     assert payload["usage"]["validationStatus"] == "valid"
-    assert payload["usage"]["model"] == "mock-gemini-3.7-flash"
+    assert payload["usage"]["model"] == "mock-gemini-3.1-flash-lite"
     # Mock is grounded by construction: factor evidence references an input id.
     factor = payload["result"]["riskFactors"][0]
     assert any(

@@ -23,7 +23,7 @@ Every result carries `usage { inputTokens, outputTokens, latencyMs }` so the bac
 | Setting | Env var | Default | Notes |
 | --- | --- | --- | --- |
 | API key | `GEMINI_API_KEY` | *(required)* | Free tier; never committed |
-| Text model | `GEMINI_TEXT_MODEL` | `gemini-3.7-flash` | Current GA "workhorse" model (Aug 2026). **Default is a starting point, not a contract** — the service probes available models at readiness check and logs a clear warning if the configured model is unavailable/deprecated |
+| Text model | `GEMINI_TEXT_MODEL` | `gemini-3.1-flash-lite` | Current default (Aug 2026): fast/lite tier, supports structured outputs (`responseSchema`) and plain text. **Default is a starting point, not a contract** — the service probes available models at readiness check and logs a clear warning if the configured model is unavailable/deprecated |
 | Embedding model | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Current GA (Aug 2026); `text-embedding-004` is retired and is **never** a default. Dimension passed explicitly (`output_dimensionality`, default 768); model/dimension change ⇒ re-index |
 | Max output tokens | `GEMINI_MAX_OUTPUT_TOKENS` | 8192 | Bounded to control cost/latency |
 | Request timeout / retries | `GEMINI_TIMEOUT_SECONDS` / `GEMINI_MAX_RETRIES` | 60 / 3 | Retry only on 429/5xx with backoff + jitter |
