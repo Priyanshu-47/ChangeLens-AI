@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from ..config import Settings
 from ..errors import AiProviderError, AiRateLimitedError, AiTimeoutError, AiValidationError
 from ..llm.prompts import PromptBundle, build_evidence_index, build_repair_prompt, build_risk_prompt
-from ..models.requests import RetrievedDocumentItem, RiskAnalysisRequest
+from ..models.requests import DependencyRetrieval, RetrievedDocumentItem, RiskAnalysisRequest
 from ..models.responses import AnalysisUsage, RiskAnalysisResponse, RiskAnalysisResult
 from ..providers.base import (
     IAIProvider,
@@ -60,6 +60,10 @@ class AnalysisService:
             request,
             prompt_version=request.prompt_version,
             max_evidence_chars=self._settings.ai_max_evidence_chars,
+            max_chars_per_chunk=min(
+                request.max_chars_per_chunk or self._settings.ai_max_chars_per_chunk,
+                self._settings.ai_max_chars_per_chunk,
+            ),
         )
 
         result, attempts, validation_status, raw = await self._generate_validated(
@@ -95,14 +99,40 @@ class AnalysisService:
         ):
             return request
 
+        # Text queries: change summary + changed-file basenames + changed/impacted symbol
+        # names (exact technical terms are the keyword leg's strength).
         queries = [request.change_summary]
         for f in request.changed_files[:5]:
             name = f.path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
             if name:
                 queries.append(name)
+        for s in request.changed_symbols[:20]:
+            if s.name and s.name not in queries:
+                queries.append(s.name)
+
+        # Phase 4 dependency leg: the Roslyn-derived paths/symbols/services steer which
+        # source/incident/runbook chunks enter the candidate set (rag-architecture §5).
+        dependency = DependencyRetrieval(
+            symbols=[s.name for s in request.changed_symbols[:100] if s.name],
+            paths=request.dependency_paths[:200],
+            services=request.impacted_services[:100],
+        )
+
+        max_chunks = min(
+            request.max_evidence_chunks or self._settings.ai_max_evidence_chunks,
+            self._settings.ai_max_evidence_chunks,
+        )
+        per_chunk_cap = min(
+            request.max_chars_per_chunk or self._settings.ai_max_chars_per_chunk,
+            self._settings.ai_max_chars_per_chunk,
+        )
 
         hits = await asyncio.to_thread(
-            self._retrieval.search_queries, request.project_id, queries
+            self._retrieval.search_queries,
+            request.project_id,
+            queries,
+            dependency=dependency,
+            k=max_chunks,
         )
 
         request.retrieved_documents = [
@@ -110,18 +140,22 @@ class AnalysisService:
                 id=f"chunk:{hit.chunk_id}",
                 document_type=hit.document_type,
                 title=hit.metadata.get("title"),
-                content=hit.content,
+                content=hit.content[:per_chunk_cap],
                 metadata={
                     "path": hit.metadata.get("path"),
                     "service": hit.metadata.get("service"),
                     "chunkType": hit.chunk_type,
                     "score": hit.score,
+                    "dependency": bool(hit.metadata.get("dependency")),
                 },
                 score=hit.score,
             )
             for hit in hits
         ]
-        logger.info("analysis_retrieved", extra={"chunks": len(request.retrieved_documents)})
+        logger.info(
+            "analysis_retrieved",
+            extra={"chunks": len(request.retrieved_documents), "maxChunks": max_chunks},
+        )
         return request
 
     async def _generate_validated(

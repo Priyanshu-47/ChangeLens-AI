@@ -23,6 +23,35 @@ public sealed class AnalyzeChangeRiskRequest
 
     [MaxLength(100)]
     public string? PromptVersion { get; set; }
+
+    // --- change source (optional; local/demo-controlled, see §12–13 of the brief) ---
+
+    /// <summary>Repository path relative to the configured allowed root. Defaults to the demo repository.</summary>
+    [MaxLength(500)]
+    public string? RepositoryPath { get; set; }
+
+    /// <summary>Git revision for the base state. Defaults to the configured demo base revision.</summary>
+    [MaxLength(200)]
+    public string? BaseRevision { get; set; }
+
+    /// <summary>Git revision for the target state. When null, the working tree is the target.</summary>
+    [MaxLength(200)]
+    public string? TargetRevision { get; set; }
+
+    // --- change-intelligence context (server-populated by the Roslyn analyzer) ---
+
+    public List<ChangedSymbolDto> ChangedSymbols { get; set; } = [];
+
+    public List<ChangedSymbolDto> ImpactedSymbols { get; set; } = [];
+
+    public List<DependencyEdgeDto> DependencyEdges { get; set; } = [];
+
+    public List<string> DependencyPaths { get; set; } = [];
+
+    public List<string> ImpactedServices { get; set; } = [];
+
+    /// <summary>Analysis-run id persisted by the backend (domain-model.md §23).</summary>
+    public Guid? AnalysisRunId { get; set; }
 }
 
 public sealed class ChangedFileRequest
@@ -51,6 +80,9 @@ public sealed class ChangeRiskAnalysisResponse
     public ChangeRiskResultDto Result { get; init; } = new();
 
     public AnalysisUsageDto Usage { get; init; } = new();
+
+    /// <summary>Id of the persisted analysis_runs row (audit trail, ADR-0009).</summary>
+    public Guid? AnalysisRunId { get; init; }
 }
 
 public sealed class ChangeRiskResultDto

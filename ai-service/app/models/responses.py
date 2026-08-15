@@ -143,10 +143,12 @@ class RiskAnalysisResponse(ApiModel):
 
 
 class RetrievalResultSources(ApiModel):
-    """Why a result was selected: semantic similarity and/or keyword rank (RRF is final)."""
+    """Why a result was selected: semantic similarity, keyword rank, and/or dependency
+    rank (RRF over all active legs is final; see docs/rag-architecture.md §5)."""
 
     vector: float | None = None
     keyword: int | None = None
+    dependency: int | None = None
 
 
 class RetrievalResultItem(ApiModel):

@@ -137,6 +137,46 @@ public sealed class AnalysesApiTests
     }
 
     [Fact]
+    public async Task DemoScenario_ChangeRiskAnalysis_DiscoversEvidenceFromRoslynAndGraph()
+    {
+        // Mock end-to-end (brief §46): the real engine resolves the demo repo's JWT
+        // key-rotation change (git HEAD → working tree), runs Roslyn, builds the
+        // dependency graph, and enriches the AI request — the fake AI client grounds
+        // its response in that evidence. No Gemini call happens.
+        var ai = new FakeAiClient();
+        var api = NewApi(ai);
+        var (token, _) = await api.RegisterAsync($"ana-demo-{Guid.NewGuid():N}@test.dev");
+        var projectId = await api.CreateProjectAsync(token, "Demo Risk Project");
+
+        using var client = api.NewClient(token);
+        var response = await client.PostAsJsonAsync("/api/v1/analyses/change-risk",
+            new
+            {
+                projectId,
+                changeSummary = "JWT signing key rotation: issue and validate against the full key history.",
+                changedFiles = new[]
+                {
+                    new { path = "src/AcmePay.Application/Auth/TokenService.cs", changeType = "modified", language = "csharp" }
+                },
+                baseRevision = "HEAD"
+            });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ChangeRiskAnalysisResponse>();
+        Assert.NotNull(body);
+        Assert.Equal("valid", body!.Usage.ValidationStatus);
+
+        // The AI request was enriched by Roslyn + the dependency graph (Phase 4).
+        Assert.NotNull(ai.Received);
+        Assert.Contains(ai.Received!.ChangedSymbols, s => s.Name == "IssueServiceToken");
+        Assert.Contains(ai.Received.ChangedSymbols, s => s.Name == "TryValidateServiceToken");
+        Assert.Contains(ai.Received.ImpactedSymbols, s => s.Name == "Program");
+        Assert.NotEmpty(ai.Received.DependencyEdges);
+        Assert.NotEmpty(ai.Received.DependencyPaths);
+        Assert.Contains(ai.Received.ChangedFiles[0].SymbolsChanged, s => s == "IssueServiceToken");
+    }
+
+    [Fact]
     public async Task AiValidationFailure_SurfacesAs422_WithDetails()
     {
         var ai = new FakeAiClient { ExceptionToThrow = new AiValidationFailedException(

@@ -10,6 +10,8 @@ from app.llm.prompts import (
 from app.models.requests import (
     ApiContractItem,
     ChangedFile,
+    ChangedSymbolItem,
+    DependencyEdgeItem,
     HistoricalIncidentItem,
     ImpactedComponentItem,
     RetrievedDocumentItem,
@@ -47,6 +49,21 @@ def test_evidence_index_contains_all_id_kinds():
         ],
         historical_incidents=[HistoricalIncidentItem(incident_id="INC-182", summary="token refresh")],
         runbooks=[RunbookItem(id="rb1", title="Key rotation", content="steps")],
+        changed_symbols=[
+            ChangedSymbolItem(
+                symbol_id="global::Auth.TokenService.Rotate()",
+                kind="Method",
+                name="Rotate",
+                fully_qualified_name="global::Auth.TokenService.Rotate()",
+            )
+        ],
+        dependency_edges=[
+            DependencyEdgeItem(
+                from_symbol_id="global::Auth.TokenService.Rotate()",
+                to_symbol_id="global::Auth.KeyStore.Save()",
+                edge_type="CALLS",
+            )
+        ],
     )
     ids = set(build_evidence_index(request))
     assert "change:src/AuthClient.cs" in ids
@@ -57,6 +74,62 @@ def test_evidence_index_contains_all_id_kinds():
     assert "d1" in ids
     assert "incident:INC-182" in ids
     assert "runbook:rb1" in ids
+    # Phase 4: symbol ids and dependency edges are part of the grounding vocabulary.
+    assert "symbol:global::Auth.TokenService.Rotate()" in ids
+    assert "dependency:global::Auth.TokenService.Rotate() -> global::Auth.KeyStore.Save()" in ids
+
+
+def test_change_model_section_renders_symbols_and_edges():
+    request = make_request(
+        changed_symbols=[
+            ChangedSymbolItem(
+                symbol_id="global::Auth.TokenService.Rotate()",
+                kind="Method",
+                name="Rotate",
+                fully_qualified_name="global::Auth.TokenService.Rotate()",
+                file_path="src/Auth/TokenService.cs",
+                project="Auth",
+                return_type="void",
+                parameters=["string key"],
+            )
+        ],
+        impacted_symbols=[
+            ChangedSymbolItem(
+                symbol_id="global::Auth.ApiKeyValidator.Validate()",
+                kind="Method",
+                name="Validate",
+                fully_qualified_name="global::Auth.ApiKeyValidator.Validate()",
+            )
+        ],
+        dependency_edges=[
+            DependencyEdgeItem(
+                from_symbol_id="global::Auth.TokenService.Rotate()",
+                to_symbol_id="global::Auth.ApiKeyValidator.Validate()",
+                edge_type="CALLS",
+                file_path="src/Auth/TokenService.cs",
+            )
+        ],
+    )
+
+    prompt = build_risk_prompt(request)
+    content = prompt.messages[0]["content"]
+    assert "<change_model>" in content
+    assert "symbol:global::Auth.TokenService.Rotate()" in content
+    assert "impacted_symbols" in content
+    assert "dependency:global::Auth.TokenService.Rotate() -> global::Auth.ApiKeyValidator.Validate()" in content
+    assert "(CALLS)" in content
+
+
+def test_per_chunk_budget_truncates_evidence():
+    request = make_request(
+        retrieved_documents=[
+            RetrievedDocumentItem(id="d1", document_type="Incident", content="x" * 20_000)
+        ]
+    )
+    prompt = build_risk_prompt(request, max_chars_per_chunk=500)
+    assert prompt.evidence_truncated
+    # The rendered evidence is capped per chunk.
+    assert len(prompt.messages[0]["content"]) < 20_000
 
 
 def test_prompt_marks_evidence_as_data():

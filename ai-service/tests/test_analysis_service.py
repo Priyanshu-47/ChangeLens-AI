@@ -215,3 +215,43 @@ def test_usage_model_defaults():
     assert usage.input_tokens is None
     assert usage.estimated_cost_usd is None
     assert usage.validation_status == "valid"
+
+
+@pytest.mark.asyncio
+async def test_change_intelligence_evidence_flows_through_mock():
+    """Phase 4: the mock provider emits symbol:/dependency: evidence grounded in the
+    change-model context — the analyzer -> graph -> retrieval chain is observable
+    without Gemini."""
+    from app.llm.prompts import build_evidence_index
+    from app.providers.mock import MockAIProvider
+
+    symbol = {
+        "symbol_id": "global::Auth.TokenService.Rotate()",
+        "kind": "Method",
+        "name": "Rotate",
+        "fully_qualified_name": "global::Auth.TokenService.Rotate()",
+    }
+    edge = {
+        "from_symbol_id": "global::Auth.TokenService.Rotate()",
+        "to_symbol_id": "global::Auth.ApiKeyValidator.Validate()",
+        "edge_type": "CALLS",
+    }
+
+    provider = MockAIProvider()
+    service = AnalysisService(provider=provider, settings=make_settings())
+    response = await service.analyze_change_risk(
+        make_request(changed_symbols=[symbol], dependency_edges=[edge])
+    )
+
+    assert response.usage.validation_status == "valid"
+    evidence_ids = {e.id for e in response.result.evidence}
+    assert "symbol:global::Auth.TokenService.Rotate()" in evidence_ids
+    assert (
+        "dependency:global::Auth.TokenService.Rotate() -> global::Auth.ApiKeyValidator.Validate()"
+        in evidence_ids
+    )
+
+    # Every risk factor references evidence ids from the index (grounding held).
+    index = set(build_evidence_index(make_request(changed_symbols=[symbol], dependency_edges=[edge])))
+    for factor in response.result.risk_factors:
+        assert any(e.reference in index for e in factor.evidence)

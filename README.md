@@ -11,7 +11,7 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 
 ## Status
 
-**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; and Phase 3 adds a real RAG pipeline: structure-aware chunking (tree-sitter), deterministic + Gemini embeddings, pgvector in the `ai` schema, and RRF hybrid retrieval feeding the analysis endpoint with grounding enforcement (mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`). See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
+**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete. Phase 4 (Change intelligence) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; Phase 3 adds a real RAG pipeline (structure-aware chunking, deterministic + Gemini embeddings, pgvector in the `ai` schema, RRF hybrid retrieval with grounding enforcement); Phase 4 adds the change-intelligence engine — a Roslyn analyzer and dependency graph in .NET, symbol-level change analysis with impact traversal, a safe local-git change source, a dependency retrieval leg (vector + keyword + metadata + dependency → RRF), `analysis_runs` persistence, and a committed demo scenario (JWT signing-key rotation). Mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
@@ -19,7 +19,7 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 | 1 | ASP.NET Core API + PostgreSQL + EF Core foundation | ✅ Complete |
 | 2 | FastAPI AI service + Gemini provider | ✅ Complete |
 | 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ✅ Complete |
-| 4 | Change analysis workflow | ⏳ Pending |
+| 4 | Change intelligence: Roslyn + dependency graph + change-risk pipeline | ✅ Complete |
 | 5 | React UI | ⏳ Pending |
 | 6 | Agent tools + tool tracing | ⏳ Pending |
 | 7 | Evaluation framework + golden dataset | ⏳ Pending |

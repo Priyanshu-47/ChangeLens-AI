@@ -29,8 +29,26 @@ def test_mock_embedding_batch():
 
 
 def test_mock_model_version_encodes_dimension():
-    provider = MockEmbeddingProvider(dimension=768, model="mock-text-embedding-004")
-    assert provider.model_version == "mock-text-embedding-004@768d"
+    provider = MockEmbeddingProvider(dimension=768, model="mock-gemini-embedding-2")
+    assert provider.model_version == "mock-gemini-embedding-2@768d"
+
+
+def test_mock_model_tracks_configured_real_model():
+    # build_embedding_provider derives the mock label from the configured model, so
+    # changing GEMINI_EMBEDDING_MODEL changes the mock version (→ re-embed triggers).
+    from app.embeddings import build_embedding_provider
+    from app.config import Settings
+
+    settings = Settings(
+        internal_api_key="test-internal-key",
+        ai_provider="mock",
+        embedding_provider="mock",
+        gemini_embedding_model="gemini-embedding-2",
+        embedding_dimension=768,
+    )
+    provider = build_embedding_provider(settings)
+    assert provider.model == "mock-gemini-embedding-2"
+    assert provider.model_version == "mock-gemini-embedding-2@768d"
 
 
 def test_similar_texts_produce_similar_vectors():

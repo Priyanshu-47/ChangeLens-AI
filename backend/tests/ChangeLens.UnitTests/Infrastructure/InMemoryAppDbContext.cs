@@ -1,4 +1,5 @@
 using ChangeLens.Application.Ports;
+using ChangeLens.Domain.Analysis;
 using ChangeLens.Domain.Audit;
 using ChangeLens.Domain.Incidents;
 using ChangeLens.Domain.Projects;
@@ -29,6 +30,8 @@ public sealed class InMemoryAppDbContext(DbContextOptions<InMemoryAppDbContext> 
     public DbSet<Incident> Incidents => Set<Incident>();
 
     public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
+
+    public DbSet<AnalysisRun> AnalysisRuns => Set<AnalysisRun>();
 
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 

@@ -33,7 +33,7 @@ class _DeterministicRandom:
 class MockEmbeddingProvider:
     provider_name = "mock"
 
-    def __init__(self, *, dimension: int = 768, model: str = "mock-text-embedding-004"):
+    def __init__(self, *, dimension: int = 768, model: str = "mock-gemini-embedding-2"):
         if not isinstance(dimension, int) or dimension < 1:
             raise ValueError(f"Mock embedding dimension must be a positive integer, got {dimension!r}.")
         self._dimension = dimension

@@ -32,7 +32,9 @@ from .base import ProviderUsage, StructuredResult
 
 logger = logging.getLogger(__name__)
 
-_EVIDENCE_ID_RE = re.compile(r"^-\s+([a-z]+:[^\s]+)\s*$", re.MULTILINE)
+# Evidence-index lines are `- <id>`. Dependency ids contain ` -> `, so capture the
+# optional arrow segment as part of the id.
+_EVIDENCE_ID_RE = re.compile(r"^-\s+([a-z]+:[^\s]+(?:\s+->\s+[^\s]+)?)\s*$", re.MULTILINE)
 
 
 class MockAIProvider:
@@ -74,6 +76,8 @@ class MockAIProvider:
         # Grounded by construction: factors reference ids that ARE in the evidence index.
         change_ids = [eid for eid in evidence_ids if eid.startswith("change:")]
         chunk_ids = [eid for eid in evidence_ids if eid.startswith("chunk:")]
+        symbol_ids = [eid for eid in evidence_ids if eid.startswith("symbol:")]
+        dependency_ids = [eid for eid in evidence_ids if eid.startswith("dependency:")]
         factors: list[RiskFactor] = []
         evidence: list[EvidenceItem] = []
         components: list[ImpactedComponent] = []
@@ -106,6 +110,36 @@ class MockAIProvider:
                 )
             )
 
+        # Phase 4 change-intelligence evidence: surface the first dependency edge and
+        # first changed symbol so the analyzer -> graph -> retrieval chain is observable
+        # even with the deterministic mock provider.
+        if dependency_ids and factors:
+            top_dep = dependency_ids[0]
+            evidence.append(
+                EvidenceItem(
+                    id=top_dep,
+                    type=EvidenceType.Dependency,
+                    reference=top_dep,
+                    summary="Dependency edge proved by the Roslyn analyzer between the changed and an impacted symbol.",
+                )
+            )
+            factors[0].evidence.append(
+                EvidenceReference(type=EvidenceType.Dependency, reference=top_dep)
+            )
+        if symbol_ids and factors:
+            top_symbol = symbol_ids[0]
+            evidence.append(
+                EvidenceItem(
+                    id=top_symbol,
+                    type=EvidenceType.Component,
+                    reference=top_symbol,
+                    summary="Changed symbol extracted by the Roslyn analyzer.",
+                )
+            )
+            factors[0].evidence.append(
+                EvidenceReference(type=EvidenceType.Component, reference=top_symbol)
+            )
+
         # Retrieved evidence (Phase 3): the top chunk is surfaced as a Document
         # evidence item and referenced by the first factor, so the retrieval -> analysis
         # chain is observable even with the deterministic mock provider.
@@ -116,7 +150,7 @@ class MockAIProvider:
                     id=top,
                     type=EvidenceType.Document,
                     reference=top,
-                    summary="Retrieved evidence relevant to this change (hybrid retrieval).",
+                    summary="Retrieved evidence relevant to this change (hybrid retrieval + dependency leg).",
                 )
             )
             factors[0].evidence.append(

@@ -29,7 +29,7 @@ The pipeline per analysis: change request → **hybrid retrieval (auto)** → ev
 
 - **Ingestion** (`POST /internal/v1/ingest/documents`): `document → normalize → sha256 → structure-aware chunking → persist chunks → batch embeddings → persist vectors`. Idempotent: unchanged content skips re-chunk/re-embed; changed content re-chunks (old chunks cascade); stale embedding model re-embeds only. Batch embedding failures are reported per chunk and retried on the next ingest — never silently dropped.
 - **Chunking** (`app/chunking/`): tree-sitter for code (csharp/javascript/typescript/python → Class/Interface/Method/Constructor/Property chunks with namespace+class metadata; unknown languages get one honest File chunk), heading-aware section chunkers for incidents and runbooks. Never fixed-N splits.
-- **Embeddings** (`app/embeddings/`): `IEmbeddingProvider` protocol, `GeminiEmbeddingProvider` (default `text-embedding-004`, 768-dim, configurable) and deterministic `MockEmbeddingProvider` (gram-overlap vectors, $0). Dimension validated per vector; embedding calls happen only during ingestion and query-time search — never at startup or on health.
+- **Embeddings** (`app/embeddings/`): `IEmbeddingProvider` protocol, `GeminiEmbeddingProvider` (default `gemini-embedding-2`, 768-dim via `output_dimensionality`, configurable — the retired `text-embedding-004` is never a default) and deterministic `MockEmbeddingProvider` (gram-overlap vectors, $0). Dimension validated per vector; embedding calls happen only during ingestion and query-time search — never at startup or on health.
 - **Retrieval** (`app/retrieval/`): vector leg (pgvector cosine, HNSW), keyword leg (PostgreSQL FTS over generated `content_tsv`, `simple` config — exact technical terms like `TimeoutException`/`401`/`JWT`), optional metadata filters (`documentType`, `serviceId`, `language`, `environment`), merged via configurable RRF (`RRF_K=60`). `project_id` is a hard server-side filter inside every SQL statement. Results carry per-source scores (`vector` similarity, `keyword` rank) so the UI can explain *why* a result surfaced.
 - **Schema** (`ai` only, ADR-0003): migrated by Alembic (`alembic upgrade head` runs at container start); pgvector extension + HNSW index + GIN tsvector index created by the initial migration.
 
@@ -80,7 +80,7 @@ All config is environment-driven (`pydantic-settings`, validated at startup — 
 | `AI_AUTO_RETRIEVE` | no | `true` | Auto-run hybrid retrieval when the request has no retrieved documents |
 | `DATABASE_URL` | no | local dev default | `postgresql+psycopg://...` — the `ai` schema lives here |
 | `EMBEDDING_PROVIDER` | no | `gemini` | `gemini` or `mock` (deterministic vectors, $0) |
-| `GEMINI_EMBEDDING_MODEL` | no | `text-embedding-004` | Embedding model; must match `EMBEDDING_DIMENSION` |
+| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-2` | Embedding model (current GA); must match `EMBEDDING_DIMENSION` |
 | `EMBEDDING_DIMENSION` | no | 768 | Vector column dimension; changing the model ⇒ migration + re-index |
 | `EMBEDDING_BATCH_SIZE` | no | 32 | Embedding requests are batched (never one request per chunk) |
 | `RETRIEVAL_TOP_K` | no | 10 | Final result count |

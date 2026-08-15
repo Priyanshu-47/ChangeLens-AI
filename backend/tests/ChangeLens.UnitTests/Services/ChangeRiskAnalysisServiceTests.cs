@@ -2,6 +2,7 @@ using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Exceptions;
 using ChangeLens.Application.Ports;
 using ChangeLens.Application.Services;
+using ChangeLens.Domain.Analysis;
 using ChangeLens.Domain.Audit;
 using ChangeLens.Domain.Projects;
 using ChangeLens.UnitTests.Infrastructure;
@@ -12,9 +13,10 @@ namespace ChangeLens.UnitTests.Services;
 public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
 {
     private readonly FakeAiClient _ai = new();
+    private readonly FakeChangeEngine _engine = new();
 
     private ChangeRiskAnalysisService Service => new(
-        Access, User, Audit, _ai, NullLogger<ChangeRiskAnalysisService>.Instance);
+        Access, User, Audit, _ai, _engine, Context, NullLogger<ChangeRiskAnalysisService>.Instance);
 
     private static AnalyzeChangeRiskRequest Request(Guid projectId) => new()
     {
@@ -41,7 +43,7 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
 
         var ex = await Assert.ThrowsAsync<NotFoundException>(
             () => new ChangeRiskAnalysisService(
-                Access, outsider, Audit, _ai, NullLogger<ChangeRiskAnalysisService>.Instance)
+                Access, outsider, Audit, _ai, _engine, Context, NullLogger<ChangeRiskAnalysisService>.Instance)
                 .AnalyzeChangeRiskAsync(Request(projectId), CancellationToken.None));
 
         Assert.Equal("not_found", ex.Code);
@@ -57,7 +59,7 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
 
         var ex = await Assert.ThrowsAsync<ForbiddenAccessException>(
             () => new ChangeRiskAnalysisService(
-                Access, viewer, Audit, _ai, NullLogger<ChangeRiskAnalysisService>.Instance)
+                Access, viewer, Audit, _ai, _engine, Context, NullLogger<ChangeRiskAnalysisService>.Instance)
                 .AnalyzeChangeRiskAsync(Request(projectId), CancellationToken.None));
 
         Assert.Equal("forbidden", ex.Code);
@@ -77,12 +79,53 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
         Assert.NotNull(response);
         Assert.Equal(projectId, _ai.Received!.ProjectId);
         Assert.Equal("MEDIUM", response.Result.RiskLevel);
+        Assert.NotNull(response.AnalysisRunId);
+        Assert.Equal(response.AnalysisRunId, _ai.Received!.AnalysisRunId);
+
+        // The change model enriched the AI request (Phase 4 change intelligence).
+        Assert.Contains(_ai.Received!.ChangedSymbols, s => s.Name == "Process");
+        Assert.Contains(_ai.Received!.DependencyEdges, e => e.EdgeType == "CALLS");
+        Assert.Contains(_ai.Received!.DependencyPaths, p => p == "src/Demo/PaymentHandler.cs");
 
         var audit = Context.Set<AuditLog>()
             .Where(a => a.Action == AuditActions.AnalysisRequested && a.ProjectId == projectId)
             .ToList();
         Assert.Single(audit);
         Assert.Equal(engineer.UserId, audit[0].UserId);
+    }
+
+    [Fact]
+    public async Task AnalysisRun_IsPersisted_AsSucceeded()
+    {
+        var projectId = await CreateProjectAsync();
+        await Projects.AddMemberAsync(projectId, User.UserId, "eng@test.dev", "Eng", ProjectRole.Engineer, CancellationToken.None);
+
+        var response = await Service.AnalyzeChangeRiskAsync(Request(projectId), CancellationToken.None);
+
+        var run = Context.Set<AnalysisRun>().Single(r => r.Id == response.AnalysisRunId);
+        Assert.Equal("Succeeded", run.Status);
+        Assert.Equal("ChangeRisk", run.Type);
+        Assert.Equal(projectId, run.ProjectId);
+        Assert.Equal("mock", run.Model);
+        Assert.NotNull(run.RetrievalConfig);
+        Assert.NotNull(run.StartedAtUtc);
+        Assert.NotNull(run.CompletedAtUtc);
+    }
+
+    [Fact]
+    public async Task AiValidationFailure_RecordsFailedRun()
+    {
+        var projectId = await CreateProjectAsync();
+        _ai.ExceptionToThrow = new AiValidationFailedException("AI output failed validation after bounded repair.");
+
+        var ex = await Assert.ThrowsAsync<AiValidationFailedException>(
+            () => Service.AnalyzeChangeRiskAsync(Request(projectId), CancellationToken.None));
+
+        Assert.Equal(422, ex.StatusCode);
+
+        var run = Context.Set<AnalysisRun>().Single(r => r.ProjectId == projectId);
+        Assert.Equal("Failed", run.Status);
+        Assert.Contains("AI output failed validation", run.Error);
     }
 
     [Fact]
@@ -131,6 +174,47 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
                 Result = new ChangeRiskResultDto { RiskLevel = "MEDIUM", Confidence = 0.7 },
                 Usage = new AnalysisUsageDto { Model = "mock", ValidationStatus = "valid" }
             });
+        }
+    }
+
+    private sealed class FakeChangeEngine : IChangeAnalysisEngine
+    {
+        public ChangeModelDto BuildChangeModel(AnalyzeChangeRiskRequest request)
+        {
+            var symbol = new ChangedSymbolDto
+            {
+                SymbolId = "global::Demo.PaymentHandler.Process(decimal)",
+                Kind = "Method",
+                Name = "Process",
+                FullyQualifiedName = "global::Demo.PaymentHandler.Process(decimal)",
+                FilePath = request.ChangedFiles.FirstOrDefault()?.Path
+            };
+
+            return new ChangeModelDto
+            {
+                ChangedFiles = request.ChangedFiles.Select(f => new ChangedFileRequest
+                {
+                    Path = f.Path,
+                    ChangeType = f.ChangeType,
+                    Language = f.Language,
+                    SymbolsChanged = ["Process"]
+                }).ToList(),
+                ChangedSymbols = [symbol],
+                ImpactedSymbols = [],
+                DependencyEdges =
+                [
+                    new DependencyEdgeDto
+                    {
+                        FromSymbolId = symbol.SymbolId,
+                        ToSymbolId = "global::Demo.Gateway.Charge(decimal)",
+                        EdgeType = "CALLS",
+                        FilePath = request.ChangedFiles.FirstOrDefault()?.Path
+                    }
+                ],
+                DependencyPaths = ["src/Demo/PaymentHandler.cs"],
+                ImpactedServices = ["Demo"],
+                Warnings = []
+            };
         }
     }
 }

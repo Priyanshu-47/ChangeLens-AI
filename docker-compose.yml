@@ -51,7 +51,7 @@ services:
       # Phase 3: the ai schema lives in the same PostgreSQL instance (ai schema owned by this service).
       DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-changelens}:${POSTGRES_PASSWORD:-changelens_dev_password}@postgres:5432/${POSTGRES_DB:-changelens}"
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
-      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
       RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-10}

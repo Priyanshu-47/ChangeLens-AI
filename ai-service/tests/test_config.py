@@ -32,6 +32,23 @@ def test_default_model_is_phase0_decision():
     assert settings.gemini_text_model == "gemini-3.7-flash"
 
 
+def test_default_embedding_model_is_current_ga():
+    settings = Settings(internal_api_key="test-internal-key", ai_provider="mock")
+    # Phase 4 correction: text-embedding-004 is retired; gemini-embedding-2 is GA.
+    assert settings.gemini_embedding_model == "gemini-embedding-2"
+    assert settings.embedding_dimension == 768
+
+
+def test_embedding_model_and_dimension_are_configurable():
+    settings = Settings(
+        internal_api_key="test-internal-key",
+        ai_provider="mock",
+        gemini_embedding_model="gemini-embedding-2",
+        embedding_dimension=1536,
+    )
+    assert settings.embedding_dimension == 1536
+
+
 def test_model_is_configurable():
     settings = Settings(
         internal_api_key="test-internal-key",

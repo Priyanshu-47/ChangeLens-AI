@@ -75,7 +75,7 @@ async def test_live_gemini_embedding_dimension():
         ai_provider="gemini",
         gemini_api_key=os.environ["GEMINI_API_KEY"],
         embedding_provider="gemini",
-        gemini_embedding_model=os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+        gemini_embedding_model=os.environ.get("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2"),
     )
     provider = GeminiEmbeddingProvider(
         api_key=settings.gemini_api_key or "",

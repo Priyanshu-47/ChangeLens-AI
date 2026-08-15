@@ -10,7 +10,7 @@ flowchart LR
     ING --> CH["Semantic chunking<br/>(structure-aware)"]
     CH --> EMB["Embed (provider abstraction)"]
     EMB --> ST[("ai schema:<br/>documents · chunks · embeddings")]
-    Q["Query / evidence package"] --> RET["Hybrid retrieval<br/>vector + keyword + filters + RRF"]
+    Q["Query / evidence package"] --> RET["Hybrid retrieval<br/>vector + keyword + filters + dependency + RRF"]
     RET --> RR["Rerank (optional)"]
     ST --> RET
     RET --> OUT["Ranked results + scores<br/>(recorded in analysis_runs)"]
@@ -33,7 +33,7 @@ Each chunk stores `chunk_type`, `heading_path` (e.g. `AuthClient/RefreshAsync`),
 
 ## 3. Embeddings
 
-- **Abstraction:** `EmbeddingProvider` interface with two implementations — `GeminiEmbeddingProvider` (API, free tier, 768-dim `text-embedding-004` default, configurable) and `LocalEmbeddingProvider` (`sentence-transformers`, offline/dev/tests, $0). See [ADR-0006](adr/0006-embedding-provider-abstraction.md).
+- **Abstraction:** `EmbeddingProvider` interface with two implementations — `GeminiEmbeddingProvider` (API, free tier, 768-dim `gemini-embedding-2` default, configurable; dimension passed via `output_dimensionality`) and `MockEmbeddingProvider` (deterministic, offline/dev/tests, $0). The retired `text-embedding-004` is never a default (Phase 4 correction). See [ADR-0006](adr/0006-embedding-provider-abstraction.md).
 - **Batch + cache:** embeddings requested in batches; identical content (same hash) never re-embedded.
 - **Model-versioned storage:** `embeddings(chunk_id, model, version, vector)`. Changing the embedding model triggers re-indexing of affected documents; old vectors remain for evaluation comparisons ([ADR-0006]).
 - **Dimensions are per-model:** vector column dimension matches the configured model; switching models is a migration + re-index event, surfaced in the UI ("re-index required").
@@ -45,10 +45,11 @@ Single search endpoint executes, per strategy:
 1. **Pre-filter (mandatory + optional):** `project_id` is always applied server-side; optional filters from the metadata surface (`document_type`, `language`, `service_id`, `environment`, `incident_id`, `time range`). Filtering happens **before** scoring, not as post-hoc cuts.
 2. **Vector leg:** embed the query → pgvector cosine similarity (HNSW index) with filters → top-k (k=50).
 3. **Keyword leg:** Postgres full-text search (`tsvector` GIN, English + identifier-aware tokenization so `AuthClient` and `RefreshAsync` match) with the same filters → top-k (k=50).
-4. **Merge:** Reciprocal Rank Fusion (RRF, `k=60`) — rank-based, robust to score-scale differences between legs. Scores and per-source components are returned so the UI can show *why* a result surfaced.
-5. **Optional rerank:** pluggable `Reranker` — MVP default is **no reranker** (RRF is sufficient at portfolio scale); local cross-encoder available via config; a Gemini/Vertex reranker can be added behind the same interface later (API-key reranking availability varies by account — never a hard dependency).
+4. **Dependency leg (Phase 4):** terms derived from the backend's Roslyn dependency graph — changed/impacted symbol names, dependency-path file names, and service names — searched over the same `project_id`-filtered scope → top-k (k=50). Dependency is a *different kind of evidence*, never blended into vector scores.
+5. **Merge:** Reciprocal Rank Fusion (RRF, `k=60`) — rank-based, robust to score-scale differences between legs. Scores and per-source components are returned so the UI can show *why* a result surfaced.
+6. **Optional rerank:** pluggable `Reranker` — MVP default is **no reranker** (RRF is sufficient at portfolio scale); local cross-encoder available via config; a Gemini/Vertex reranker can be added behind the same interface later (API-key reranking availability varies by account — never a hard dependency).
 
-**Dependency relationships join retrieval:** the backend enriches retrieved *code* chunks with their dependents/callees from the `app` schema dependency graph before building the evidence package — so retrieval is "similar code", and the evidence package is "similar code + what it touches". This is the fourth retrieval dimension from the brief.
+**Dependency relationships join retrieval (implemented Phase 4):** the backend runs Roslyn over the repository state, builds the dependency graph, and sends the change model (changed/impacted symbols, dependency edges/paths, impacted services) to the AI service. The AI service adds the dependency retrieval leg and renders every evidence item with a stable id (`chunk:`, `symbol:`, `dependency:`) so the LLM context is "similar code + what the change touches". Ranking is documented per leg: dependency terms rank candidates for *connectivity to the change*, not similarity to the change text.
 
 ## 5. Retrieval observability (feeds evaluation)
 
@@ -84,7 +85,7 @@ verified against `ai-service/`.
   `ApiDefinition`/`DeploymentRecord` use the heading-section fallback until their data
   sources land (Phase 4).
 - **Embeddings**: `IEmbeddingProvider` protocol with `GeminiEmbeddingProvider`
-  (`GEMINI_EMBEDDING_MODEL`, default `text-embedding-004`, 768-dim) and a deterministic
+  (`GEMINI_EMBEDDING_MODEL`, default `gemini-embedding-2`, 768-dim) and a deterministic
   `MockEmbeddingProvider` (gram-overlap vectors, $0, used by dev/tests). Dimension is
   validated on every vector; mismatches fail loudly. Embedding calls happen only during
   ingestion/re-index and query-time vector search — never at startup or on health checks.
@@ -109,14 +110,52 @@ verified against `ai-service/`.
 - **Readiness** reports database reachability + vector extension availability; a live
   provider probe stays opt-in (`AI_READINESS_PROBE`) so health never spends tokens.
 
-**Deferred (Phase 4+ — documented here so nobody claims otherwise)**
+## 8. Phase 4 implementation status (actual, not aspirational)
+
+Phase 4 (commit `feat: implement change intelligence`) added the **dependency retrieval
+leg** and the change-model prompt context. This section records what is real in the code
+today, verified against `backend/` and `ai-service/`.
+
+**Implemented**
+
+- **Roslyn analyzer** (`backend/.../Infrastructure/Analysis/RoslynAnalyzer.cs`): symbol
+  extraction (classes, interfaces, methods, constructors, properties, fields), dependency
+  edges (CALLS, REFERENCES_TYPE, IMPLEMENTS, INHERITS), in-memory `DependencyGraph` with
+  direct dependencies/dependents and bounded traversal. Verified on the 24-file AcmePay
+  demo: 31 classes, 31 methods, 6 constructors, 30 properties, 34+ dependency edges.
+- **Symbol-level change analysis** (`ChangeAnalyzer.cs`): added/removed/modified symbol
+  diffing (signature + body hash), configurable impact traversal (default depth 2), API
+  impact (controller → route → HTTP method → action → DTOs), external-integration impact
+  (HttpClient clients: endpoints, retry, timeout), dependency paths for retrieval.
+- **Safe local-git change source** (`GitChangeSource.cs`): repository path restricted to a
+  configured root, path-traversal/absolute-path/URI rejection, strict git-revision
+  validation (no `..`, no leading `-`), git invoked with a fixed argument list only — no
+  user-supplied command line, no shell, analyzed source is never executed.
+- **Change-risk pipeline** (Workflow A): `POST /api/v1/analyses/change-risk` →
+  `ChangeAnalysisEngine` (git base→target + Roslyn + graph) → enriched AI request →
+  `analysis_runs` persistence → AI service auto-retrieval with the dependency leg →
+  grounded risk report. The client never supplies evidence — the system discovers it.
+- **Dependency retrieval leg** (`ai-service/app/retrieval/service.py`): terms from
+  changed/impacted symbols + dependency paths + impacted services run as a third RRF list
+  over the `project_id`-scoped scope; results carry `dependency` rank metadata.
+- **Change-model prompt context** (`ai-service/app/llm/prompts.py` + `risk_v1.txt`): the
+  evidence index now renders `symbol:` / `dependency:` ids alongside `chunk:` ids;
+  changed/impacted symbols, dependency edges and paths render in a structured change
+  section; per-chunk caps and total budgets (`MAX_EVIDENCE_CHUNKS`, `MAX_CHARS_PER_CHUNK`,
+  context-token cap) bound the context. The grounding validator is unchanged: unknown ids
+  still fail validation.
+- **Demo scenario**: the working tree of `data/demo-repository` carries a committed JWT
+  signing-key rotation change in `TokenService.cs`; the engine resolves it against git
+  HEAD and produces 4 changed symbols, 2 added symbols, 2 impacted symbols (incl. the
+  `Program` DI registration), 8 relevant dependency edges and 2 dependency paths.
+
+**Deferred (documented here so nobody claims otherwise)**
 
 - Cross-encoder reranker — explicitly NOT implemented (MVP = RRF; revisit only if
   evaluation shows RRF insufficient).
-- Dependency-relationship retrieval leg — the interface exists (evidence ids are stable)
-  but the dependency contribution is empty until the Roslyn analyzer populates it.
+- Workflow B (incident investigation) end-to-end and the async job runner — later phases.
 - Structured (non-text) incident fields, OpenAPI path-item chunker, JSON/YAML structural
   chunker, and the identifier-aware tokenizer for the keyword leg.
-- Persisting retrieval queries/ranks into `analysis_runs` for the evaluation engine
-  (Phase 4 evaluation phase).
+- Persisting per-leg retrieval queries/ranks into `analysis_runs` for the evaluation
+  engine (Phase 7).
 - No measured accuracy metrics exist — the golden dataset defines *targets* only.
