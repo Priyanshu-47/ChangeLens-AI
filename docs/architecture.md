@@ -116,10 +116,16 @@ The React SPA (`frontend/`, Vite + TS strict + React Router, no Redux/Next) impl
 | `POST /internal/v1/retrieval/search` | Hybrid retrieval: vector + keyword + metadata filters → ranked results |
 | `POST /internal/v1/analysis/risk` | Structured risk report over an evidence package |
 | `POST /internal/v1/analysis/incident` | Structured incident investigation over an evidence package |
-| `POST /internal/v1/evaluations/run` | Run evaluation over the golden dataset (Phase 8) |
+| `POST /internal/v1/evaluations/run` | Run evaluation over the golden dataset (deferred — Phase 7 evaluation runs as a local CLI, docs/evaluation.md) |
 | `GET /internal/v1/health/live`, `GET /internal/v1/health/ready` | Liveness / readiness (includes LLM config probe) |
 
 Full request/response schemas: [docs/ai-service-boundary.md](ai-service-boundary.md). Contract versioning: both sides pin `X-Contract-Version`; breaking changes bump the version and are coordinated across releases (single repo makes this cheap).
+
+### Evaluation, trace & observability (Phase 7)
+
+**Evaluation** runs as a deterministic local CLI (`python -m app.evaluation.run`, docs/evaluation.md) over the versioned 20-case golden dataset (`v1`): per-leg ablation (vector / keyword / dependency / hybrid) with Recall@K / Precision@K / MRR / Hit Rate, mechanical grounding + schema checks through the mock-AI pipeline, and JSON+Markdown reports under gitignored `data/evaluation-output/`. It forces mock providers — zero Gemini, no API key. Regression comparison uses a JSON baseline (`--baseline`); deltas are informational until thresholds are justified by data.
+
+**Traceability** is per-analysis, not per-batch: every run persists `analysis_runs.TraceJson` (schema `trace-v1`) — real per-stage timings plus the AI service's retrieval trace (queries, candidate vs selected counts, budgets, and per-item vector/keyword/dependency attribution, which are non-comparable signals shown separately). `GET /api/v1/analyses/{id}/trace` exposes it with the same authorization as the analysis. Failure codes map to normalized categories (VALIDATION / RATE_LIMIT / TIMEOUT / AI_PROVIDER / INTERNAL). No prompts, tokens, or secrets are stored. The React Analysis page renders a lazy-loaded Trace panel with a retrieval explorer.
 
 ### Where orchestration lives
 

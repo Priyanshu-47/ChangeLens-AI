@@ -52,14 +52,11 @@
 | POST | `/api/v1/incidents/{incidentId}/events` | Append a timeline event (log/error/deployment) — **Phase 1** |
 | POST | `/api/v1/incidents/{incidentId}/investigate` | 202 → runs Workflow B async — **Phase 5** |
 | GET | `/api/v1/analyses/{analysisRunId}` | Job status; validated result when complete — **Phase 5** (async polling) |
+| GET | `/api/v1/analyses/{analysisRunId}/trace` | Per-stage observability trace + retrieval explorer — **Phase 7** (authz identical to the analysis) |
 | GET | `/api/v1/incidents/{incidentId}/investigation` | Latest investigation result (Phase 6) |
 
-### Evaluation (Phase 8)
-| Method | Path | Notes |
-| --- | --- | --- |
-| POST | `/api/v1/evaluations/run` | 202 — runs golden dataset eval (config: strategies to compare) |
-| GET | `/api/v1/evaluations` | List runs |
-| GET | `/api/v1/evaluations/{id}` | Stored metrics for the dashboard |
+### Evaluation
+Phase 7 evaluation is a local CLI (`python -m app.evaluation.run`, docs/evaluation.md) producing JSON/Markdown reports under gitignored `data/evaluation-output/`; it forces mock providers (zero Gemini). The REST evaluation endpoints below remain **deferred** (a future hosted-run surface).
 
 ### Ops
 | Method | Path | Notes |

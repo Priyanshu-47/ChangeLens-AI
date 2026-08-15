@@ -169,6 +169,53 @@ export interface IncidentInvestigationResult {
   evidence: IncidentEvidence[];
 }
 
+// ── Analysis trace (Phase 7 observability) ──────────────────────────────
+export interface AnalysisStage {
+  name: string;
+  status: 'Completed' | 'Failed';
+  startedAtUtc: string | null;
+  completedAtUtc: string | null;
+  durationMs: number | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface RetrievalTraceItem {
+  id: string;
+  documentType: string;
+  title: string | null;
+  path: string | null;
+  score: number | null;
+  /** Semantic similarity — NOT comparable to keyword/dependency ranks. */
+  vectorScore: number | null;
+  /** 1-based position in the keyword leg's candidate list. */
+  keywordRank: number | null;
+  /** 1-based position in the dependency leg's candidate list. */
+  dependencyRank: number | null;
+}
+
+export interface RetrievalTrace {
+  queries: string[];
+  candidateCount: number;
+  selectedCount: number;
+  maxChunks: number;
+  maxCharsPerChunk: number;
+  items: RetrievalTraceItem[];
+}
+
+export interface AnalysisTrace {
+  analysisId: string;
+  type: string;
+  status: AnalysisStatus;
+  model: string | null;
+  promptVersion: string | null;
+  resultSchemaVersion: string | null;
+  traceSchemaVersion: string | null;
+  stages: AnalysisStage[];
+  retrieval: RetrievalTrace | null;
+  failureCode: string | null;
+  failureCategory: string | null;
+}
+
 // ── Change-risk result (Workflow A) ─────────────────────────────────────
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 

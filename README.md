@@ -11,7 +11,7 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 
 ## Status
 
-**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete. Phase 4 (Change intelligence) — complete. Phase 5 (Incident investigation + async analysis) — complete. Phase 6 (React UI) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; Phase 3 adds a real RAG pipeline (structure-aware chunking, deterministic + Gemini embeddings, pgvector in the `ai` schema, RRF hybrid retrieval with grounding enforcement); Phase 4 adds the change-intelligence engine — a Roslyn analyzer and dependency graph in .NET, symbol-level change analysis with impact traversal, a safe local-git change source, a dependency retrieval leg (vector + keyword + metadata + dependency → RRF), `analysis_runs` persistence, and a demo scenario — an uncommitted signing-key follow-up change in `TokenService.cs` that the analyzer resolves against git HEAD. Phase 5 adds the **incident investigation workflow** (normalized incident context → hybrid retrieval → grounded `rootCauseCandidates[]` + remediation + unknowns) and the **async job system** — `POST /incidents/{id}/investigate` → `202` → bounded in-process queue + background worker → `GET /analyses/{id}` polling, with an enforced job state machine (`Queued → Running → Succeeded | Failed`), bounded retries, per-job timeouts, idempotency keys, and cross-project isolation. Phase 6 adds the **React dashboard** (`frontend/`, Vite + TS + React Router): login/protected routes, project context, incidents with timeline + investigate (202), async polling, the evidence-linked investigation result page (root-cause candidates, evidence explorer, grounding badge, unknowns), and the change-risk submission screen. Mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
+**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete. Phase 4 (Change intelligence) — complete. Phase 5 (Incident investigation + async analysis) — complete. Phase 6 (React UI) — complete. Phase 7 (Evaluation + AI observability) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; Phase 3 adds a real RAG pipeline (structure-aware chunking, deterministic + Gemini embeddings, pgvector in the `ai` schema, RRF hybrid retrieval with grounding enforcement); Phase 4 adds the change-intelligence engine — a Roslyn analyzer and dependency graph in .NET, symbol-level change analysis with impact traversal, a safe local-git change source, a dependency retrieval leg (vector + keyword + metadata + dependency → RRF), `analysis_runs` persistence, and a demo scenario — an uncommitted signing-key follow-up change in `TokenService.cs` that the analyzer resolves against git HEAD. Phase 5 adds the **incident investigation workflow** (normalized incident context → hybrid retrieval → grounded `rootCauseCandidates[]` + remediation + unknowns) and the **async job system** — `POST /incidents/{id}/investigate` → `202` → bounded in-process queue + background worker → `GET /analyses/{id}` polling, with an enforced job state machine (`Queued → Running → Succeeded | Failed`), bounded retries, per-job timeouts, idempotency keys, and cross-project isolation. Phase 6 adds the **React dashboard** (`frontend/`, Vite + TS + React Router): login/protected routes, project context, incidents with timeline + investigate (202), async polling, the evidence-linked investigation result page (root-cause candidates, evidence explorer, grounding badge, unknowns), and the change-risk submission screen. Phase 7 adds **deterministic evaluation + AI observability**: a versioned 20-case golden dataset runner (`python -m app.evaluation.run`, mock providers, zero Gemini) with per-leg ablation (vector/keyword/dependency/hybrid), Recall@K / Precision@K / MRR / Hit Rate, grounding + schema checks, JSON/Markdown reports and JSON-baseline regression comparison (see [docs/evaluation.md](docs/evaluation.md)); per-analysis traces (`analysis_runs.TraceJson`) with real stage timings, retrieval-leg attribution, and normalized failure categories, exposed via `GET /api/v1/analyses/{id}/trace` and rendered in a React Trace panel + Retrieval Explorer. Mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
@@ -22,7 +22,8 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 | 4 | Change intelligence: Roslyn + dependency graph + change-risk pipeline | ✅ Complete |
 | 5 | Incident investigation + async analysis jobs (202 + poll) | ✅ Complete |
 | 6 | React UI — dashboard, incident investigation, change risk | ✅ Complete |
-| 7 | Agent tools + tool tracing | ⏳ Pending |
+| 7 | Evaluation + AI observability (runner, trace, retrieval explorer) | ✅ Complete |
+| 8 | Agent tools + tool tracing | ⏳ Pending |
 | 8 | Evaluation framework + golden dataset | ⏳ Pending |
 | 9 | Observability + security hardening | ⏳ Pending |
 | 10 | Docker + CI/CD | ⏳ Pending |
@@ -68,6 +69,7 @@ changelens-ai/
 | [docs/llm-integration.md](docs/llm-integration.md) | Gemini integration, provider abstraction, cost control |
 | [docs/security-model.md](docs/security-model.md) | AuthN/AuthZ, prompt injection defense, secrets, audit |
 | [docs/deployment-strategy.md](docs/deployment-strategy.md) | $0-first local Docker, free tiers, AWS path |
+| [docs/evaluation.md](docs/evaluation.md) | Metrics, dataset, runner, trace architecture, limitations |
 | [docs/development-sequence.md](docs/development-sequence.md) | Phase-by-phase plan with exit criteria |
 | [docs/risks-and-tradeoffs.md](docs/risks-and-tradeoffs.md) | Risk register, trade-offs, open questions |
 | [docs/definition-of-done.md](docs/definition-of-done.md) | Definition of Done for the MVP |
@@ -112,7 +114,7 @@ changelens-ai/
    ```bash
    cd backend && dotnet test tests/ChangeLens.UnitTests
    CHANGELENS_TEST_CONNECTION_STRING="…test connection string…" dotnet test tests/ChangeLens.Api.IntegrationTests
-   cd ../ai-service && .venv/Scripts/python -m pytest -q   # 118 tests, zero Gemini calls, no DB needed
+   cd ../ai-service && .venv/Scripts/python -m pytest -q   # 139 tests, zero Gemini calls, no DB needed
    TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
      .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # pgvector integration tests
    ```

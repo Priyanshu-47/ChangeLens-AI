@@ -79,6 +79,14 @@ public sealed class AnalysisRun : AuditableEntity
     /// <summary>Safe failure detail when Status == Failed (never raw stack traces or secrets).</summary>
     public string? Error { get; set; }
 
+    /// <summary>Per-stage observability trace (JSON, Phase 7 — see docs/evaluation.md §5).
+    /// Stages carry real wall-clock durations; retrieval items carry leg attribution.
+    /// Raw prompts and secrets are never stored.</summary>
+    public string? TraceJson { get; set; }
+
+    /// <summary>Trace schema version (e.g. "trace-v1").</summary>
+    public string? TraceSchemaVersion { get; set; }
+
     public DateTime? QueuedAtUtc { get; set; }
 
     public DateTime? StartedAtUtc { get; set; }

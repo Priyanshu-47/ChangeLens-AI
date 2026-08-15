@@ -3,6 +3,7 @@ using ChangeLens.Application.Configuration;
 using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Exceptions;
 using ChangeLens.Application.Ports;
+using ChangeLens.Application.Tracing;
 using ChangeLens.Domain.Analysis;
 using ChangeLens.Domain.Audit;
 using ChangeLens.Domain.Incidents;
@@ -39,13 +40,14 @@ public sealed class IncidentInvestigationOrchestrator(
 
     public async Task RunAsync(AnalysisJob job, CancellationToken ct)
     {
+        var trace = new AnalysisTraceBuilder();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Opts.JobTimeoutSeconds)));
         var jobCt = timeout.Token;
 
         try
         {
-            await ExecuteCoreAsync(job, jobCt);
+            await ExecuteCoreAsync(job, jobCt, trace);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -53,24 +55,28 @@ public sealed class IncidentInvestigationOrchestrator(
             logger.LogWarning(
                 "Analysis job {AnalysisRunId} exceeded the {Timeout}s job timeout",
                 job.AnalysisRunId, Opts.JobTimeoutSeconds);
+            trace.Fail(AnalysisFailureCode.JobTimeout,
+                "The analysis exceeded the configured job timeout.");
             await MarkFailedAsync(
                 job, AnalysisFailureCode.JobTimeout,
-                "The analysis exceeded the configured job timeout.", ct);
+                "The analysis exceeded the configured job timeout.", ct, trace);
         }
         catch (AiServiceException ex)
         {
-            await MarkFailedAsync(job, FailureCodeFor(ex), SafeMessage(ex), ct);
+            trace.Fail(FailureCodeFor(ex), SafeMessage(ex));
+            await MarkFailedAsync(job, FailureCodeFor(ex), SafeMessage(ex), ct, trace);
         }
         catch (Exception ex)
         {
             logger.LogError(ex,
                 "Analysis job {AnalysisRunId} failed unexpectedly", job.AnalysisRunId);
+            trace.Fail(AnalysisFailureCode.Internal, "The analysis failed unexpectedly.");
             await MarkFailedAsync(job, AnalysisFailureCode.Internal,
-                "The analysis failed unexpectedly.", ct);
+                "The analysis failed unexpectedly.", ct, trace);
         }
     }
 
-    private async Task ExecuteCoreAsync(AnalysisJob job, CancellationToken ct)
+    private async Task ExecuteCoreAsync(AnalysisJob job, CancellationToken ct, AnalysisTraceBuilder trace)
     {
         var run = await db.Set<AnalysisRun>().FirstOrDefaultAsync(r => r.Id == job.AnalysisRunId, ct);
         if (run is null)
@@ -96,7 +102,7 @@ public sealed class IncidentInvestigationOrchestrator(
             AuditActions.AnalysisStarted, "analysis", null, run.ProjectId, run.Id,
             details: new { analysisRunId = run.Id, analysisType = run.Type }, ct: ct);
 
-        var response = await RunWithRetriesAsync(job, run, ct);
+        var response = await RunWithRetriesAsync(job, run, trace, ct);
 
         run.TransitionTo(AnalysisStatus.Succeeded);
         run.ResultJson = JsonSerializer.Serialize(response.Result, ResultJson);
@@ -105,6 +111,15 @@ public sealed class IncidentInvestigationOrchestrator(
         run.PromptVersion = response.Usage.PromptVersion;
         run.RetrievalConfig = RetrievalSnapshot(response);
         run.CompletedAtUtc = DateTime.UtcNow;
+        trace.SetRetrieval(response.Trace);
+        using (trace.Stage("Persistence"))
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        // Serialize after the Persistence stage is recorded so the persisted trace
+        // includes it (the second save writes the trace only).
+        run.TraceJson = trace.Serialize();
+        run.TraceSchemaVersion = trace.Schema;
         await db.SaveChangesAsync(ct);
 
         await audit.WriteAsync(
@@ -131,42 +146,54 @@ public sealed class IncidentInvestigationOrchestrator(
     }
 
     private async Task<IncidentAnalysisResponseDto> RunWithRetriesAsync(
-        AnalysisJob job, AnalysisRun run, CancellationToken ct)
+        AnalysisJob job, AnalysisRun run, AnalysisTraceBuilder trace, CancellationToken ct)
     {
-        var maxAttempts = Math.Max(1, Opts.MaxRetries + 1);
-
-        for (var attempt = 1; ; attempt++)
+        // Context construction happens once, before the retry loop: the normalized
+        // incident context is identical across attempts (Phase 7 trace stage).
+        Incident incident;
+        using (trace.Stage("Context"))
         {
-            try
-            {
-                var incident = await db.Set<Incident>().AsNoTracking()
-                    .Include(i => i.Events)
-                    .FirstAsync(i => i.Id == job.IncidentId, ct);
+            incident = await db.Set<Incident>().AsNoTracking()
+                .Include(i => i.Events)
+                .FirstAsync(i => i.Id == job.IncidentId, ct);
+        }
 
-                var request = new IncidentAnalysisRequestDto
+        var request = new IncidentAnalysisRequestDto
+        {
+            AnalysisId = run.Id,
+            ProjectId = run.ProjectId,
+            Incident = IncidentContextBuilder.Build(incident),
+            PromptVersion = "incident-v1"
+        };
+
+        // One timed stage for the AI call (which internally performs hybrid retrieval
+        // and validation in the AI service — the per-item retrieval trace is attached
+        // separately, and the AI service's own latency is in Usage.LatencyMs).
+        var maxAttempts = Math.Max(1, Opts.MaxRetries + 1);
+        using (trace.Stage("AI Analysis"))
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
                 {
-                    AnalysisId = run.Id,
-                    ProjectId = run.ProjectId,
-                    Incident = IncidentContextBuilder.Build(incident),
-                    PromptVersion = "incident-v1"
-                };
-
-                return await aiClient.AnalyzeIncidentAsync(request, ct);
-            }
-            catch (AiServiceException ex) when (IsTransient(ex) && attempt < maxAttempts)
-            {
-                var delay = Backoff(attempt);
-                logger.LogWarning(
-                    "Transient AI failure ({Code}) on attempt {Attempt}/{MaxAttempts}; " +
-                    "retrying in {DelaySeconds}s for run {AnalysisRunId}",
-                    ex.Code, attempt, maxAttempts, delay.TotalSeconds, run.Id);
-                await Task.Delay(delay, ct);
+                    return await aiClient.AnalyzeIncidentAsync(request, ct);
+                }
+                catch (AiServiceException ex) when (IsTransient(ex) && attempt < maxAttempts)
+                {
+                    var delay = Backoff(attempt);
+                    logger.LogWarning(
+                        "Transient AI failure ({Code}) on attempt {Attempt}/{MaxAttempts}; " +
+                        "retrying in {DelaySeconds}s for run {AnalysisRunId}",
+                        ex.Code, attempt, maxAttempts, delay.TotalSeconds, run.Id);
+                    await Task.Delay(delay, ct);
+                }
             }
         }
     }
 
     private async Task MarkFailedAsync(
-        AnalysisJob job, string failureCode, string message, CancellationToken ct)
+        AnalysisJob job, string failureCode, string message, CancellationToken ct,
+        AnalysisTraceBuilder? trace = null)
     {
         try
         {
@@ -195,6 +222,11 @@ public sealed class IncidentInvestigationOrchestrator(
             run.FailureCode = failureCode;
             run.Error = message;
             run.CompletedAtUtc = DateTime.UtcNow;
+            if (trace is not null)
+            {
+                run.TraceJson = trace.Serialize();
+                run.TraceSchemaVersion = trace.Schema;
+            }
             await db.SaveChangesAsync(ct);
 
             await audit.WriteAsync(

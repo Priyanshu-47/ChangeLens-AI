@@ -59,3 +59,6 @@ Thumbs.db
 # ── Misc ────────────────────────────────────────────────────────────────
 *.swp
 *~
+
+# Phase 7 evaluation output (generated, large)
+data/evaluation-output/

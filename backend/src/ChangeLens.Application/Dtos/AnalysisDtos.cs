@@ -1,3 +1,5 @@
+using ChangeLens.Domain.Analysis;
+
 namespace ChangeLens.Application.Dtos;
 
 /// <summary>One unit of async work (docs/rag-architecture.md §6, ADR-0009).</summary>
@@ -128,6 +130,80 @@ public sealed class IncidentAnalysisResponseDto
     public IncidentAnalysisResultDto Result { get; set; } = new();
 
     public AnalysisUsageDto Usage { get; set; } = new();
+
+    /// <summary>Retrieval trace from the AI service (Phase 7 observability).</summary>
+    public RetrievalTraceDto? Trace { get; set; }
+}
+
+// ── Analysis trace API (Phase 7, docs/evaluation.md §5) ────────────────────
+
+/// <summary>Normalized failure categories (docs/evaluation.md §6).</summary>
+public static class AnalysisFailureCategory
+{
+    public const string Validation = "VALIDATION";
+    public const string Authorization = "AUTHORIZATION";
+    public const string Retrieval = "RETRIEVAL";
+    public const string AiProvider = "AI_PROVIDER";
+    public const string RateLimit = "RATE_LIMIT";
+    public const string Timeout = "TIMEOUT";
+    public const string Persistence = "PERSISTENCE";
+    public const string Internal = "INTERNAL";
+
+    /// <summary>Maps a persisted failure code to its normalized category.</summary>
+    public static string For(string? failureCode) => failureCode switch
+    {
+        AnalysisFailureCode.AiValidationFailed => Validation,
+        AnalysisFailureCode.LlmRateLimited => RateLimit,
+        AnalysisFailureCode.AiTimeout => Timeout,
+        AnalysisFailureCode.AiUnavailable => AiProvider,
+        AnalysisFailureCode.JobTimeout => Timeout,
+        _ => Internal
+    };
+}
+
+/// <summary>One timed stage in the analysis trace.</summary>
+public sealed class AnalysisStageDto
+{
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Completed | Failed.</summary>
+    public string Status { get; set; } = "Completed";
+
+    public DateTime? StartedAtUtc { get; set; }
+
+    public DateTime? CompletedAtUtc { get; set; }
+
+    /// <summary>Real wall-clock duration; never estimated.</summary>
+    public long? DurationMs { get; set; }
+
+    /// <summary>Stage-specific metadata (e.g. { failureCode, failureCategory }).</summary>
+    public Dictionary<string, object?>? Metadata { get; set; }
+}
+
+/// <summary>GET /api/v1/analyses/{analysisId}/trace response.</summary>
+public sealed class AnalysisTraceResponse
+{
+    public Guid AnalysisId { get; set; }
+
+    public string Type { get; set; } = string.Empty;
+
+    public string Status { get; set; } = string.Empty;
+
+    public string? Model { get; set; }
+
+    public string? PromptVersion { get; set; }
+
+    public string? ResultSchemaVersion { get; set; }
+
+    public string? TraceSchemaVersion { get; set; }
+
+    public List<AnalysisStageDto> Stages { get; set; } = [];
+
+    public RetrievalTraceDto? Retrieval { get; set; }
+
+    public string? FailureCode { get; set; }
+
+    public string? FailureCategory { get; set; }
 }
 
 public sealed class IncidentAnalysisResultDto

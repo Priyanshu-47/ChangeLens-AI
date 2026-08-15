@@ -110,7 +110,9 @@ class RetrievalSearchRequest(ApiModel):
     query: str = Field(min_length=1, max_length=2000)
     document_types: list[str] | None = Field(default=None, max_length=10)
     filters: SearchFilters = Field(default_factory=SearchFilters)
-    strategy: Literal["hybrid", "vector", "keyword"] = "hybrid"
+    # "dependency" is used by the evaluation runner's ablation mode (docs/evaluation.md):
+    # the dependency leg alone, ranked by its stable chunk-id order.
+    strategy: Literal["hybrid", "vector", "keyword", "dependency"] = "hybrid"
     k: int = Field(default=10, ge=1, le=100)
     embedding_model: str | None = Field(default=None, max_length=200)
     dependency: DependencyRetrieval | None = Field(default=None)

@@ -35,6 +35,8 @@ from ..models.responses import (
     AnalysisUsage,
     IncidentAnalysisResponse,
     IncidentAnalysisResult,
+    RetrievalTrace,
+    RetrievalTraceItem,
     RiskAnalysisResponse,
     RiskAnalysisResult,
 )
@@ -72,7 +74,7 @@ class AnalysisService:
         started = time.perf_counter()
         logger.info("analysis_started", extra={"projectId": request.project_id})
 
-        request = await self._maybe_retrieve(request)
+        request, trace = await self._maybe_retrieve(request)
 
         evidence_ids = set(build_evidence_index(request))
         prompt = build_risk_prompt(
@@ -102,7 +104,7 @@ class AnalysisService:
                 "retrieved": len(request.retrieved_documents),
             },
         )
-        return RiskAnalysisResponse(analysis_type="change-risk", result=result, usage=usage)
+        return RiskAnalysisResponse(analysis_type="change-risk", result=result, usage=usage, trace=trace)
 
     async def analyze_incident(self, request: IncidentAnalysisRequest) -> IncidentAnalysisResponse:
         """Incident investigation (brief §2/§13–20): hybrid retrieval from the incident
@@ -115,7 +117,7 @@ class AnalysisService:
             extra={"projectId": request.project_id, "analysisId": request.analysis_id},
         )
 
-        request = await self._maybe_retrieve_incident(request)
+        request, trace = await self._maybe_retrieve_incident(request)
 
         evidence_ids = set(build_incident_evidence_index(request))
         prompt = build_incident_prompt(
@@ -145,11 +147,11 @@ class AnalysisService:
                 "retrieved": len(request.retrieved_documents),
             },
         )
-        return IncidentAnalysisResponse(analysis_type="incident", result=result, usage=usage)
+        return IncidentAnalysisResponse(analysis_type="incident", result=result, usage=usage, trace=trace)
 
     async def _maybe_retrieve_incident(
         self, request: IncidentAnalysisRequest
-    ) -> IncidentAnalysisRequest:
+    ) -> tuple[IncidentAnalysisRequest, RetrievalTrace | None]:
         """Hybrid retrieval driven by the incident context (brief §13–14).
 
         Queries preserve exact technical identifiers (error messages, exception types,
@@ -162,7 +164,7 @@ class AnalysisService:
             or self._retrieval is None
             or request.retrieved_documents
         ):
-            return request
+            return request, None
 
         queries = [request.incident.title]
         for s in request.incident.symptoms[:5]:
@@ -184,14 +186,17 @@ class AnalysisService:
             request.max_chars_per_chunk or self._settings.ai_max_chars_per_chunk,
             self._settings.ai_max_chars_per_chunk,
         )
-
+        # Request more candidates than we select so the trace can show what was
+        # considered vs what entered the prompt (evidence-selection trace, brief §22).
+        candidate_k = min(max_chunks * 2, self._settings.retrieval_candidate_k)
         hits = await asyncio.to_thread(
             self._retrieval.search_queries,
             request.project_id,
             queries,
             dependency=dependency,
-            k=max_chunks,
+            k=candidate_k,
         )
+        selected = hits[:max_chunks]
 
         request.retrieved_documents = [
             RetrievedDocumentItem(
@@ -209,15 +214,18 @@ class AnalysisService:
                 },
                 score=hit.score,
             )
-            for hit in hits
+            for hit in selected
         ]
+        trace = _build_retrieval_trace(queries, hits, selected, max_chunks, per_chunk_cap)
         logger.info(
             "incident_analysis_retrieved",
             extra={"chunks": len(request.retrieved_documents), "maxChunks": max_chunks},
         )
-        return request
+        return request, trace
 
-    async def _maybe_retrieve(self, request: RiskAnalysisRequest) -> RiskAnalysisRequest:
+    async def _maybe_retrieve(
+        self, request: RiskAnalysisRequest
+    ) -> tuple[RiskAnalysisRequest, RetrievalTrace | None]:
         """Fill the evidence package with hybrid retrieval when the request lacks it.
 
         Queries: the change summary plus changed-file basenames (exact technical terms
@@ -229,7 +237,7 @@ class AnalysisService:
             or self._retrieval is None
             or request.retrieved_documents
         ):
-            return request
+            return request, None
 
         # Text queries: change summary + changed-file basenames + changed/impacted symbol
         # names (exact technical terms are the keyword leg's strength).
@@ -258,14 +266,17 @@ class AnalysisService:
             request.max_chars_per_chunk or self._settings.ai_max_chars_per_chunk,
             self._settings.ai_max_chars_per_chunk,
         )
-
+        # Candidate set > evidence budget: the trace records what was considered vs
+        # what entered the prompt (evidence-selection trace, brief §22).
+        candidate_k = min(max_chunks * 2, self._settings.retrieval_candidate_k)
         hits = await asyncio.to_thread(
             self._retrieval.search_queries,
             request.project_id,
             queries,
             dependency=dependency,
-            k=max_chunks,
+            k=candidate_k,
         )
+        selected = hits[:max_chunks]
 
         request.retrieved_documents = [
             RetrievedDocumentItem(
@@ -282,13 +293,14 @@ class AnalysisService:
                 },
                 score=hit.score,
             )
-            for hit in hits
+            for hit in selected
         ]
+        trace = _build_retrieval_trace(queries, hits, selected, max_chunks, per_chunk_cap)
         logger.info(
             "analysis_retrieved",
             extra={"chunks": len(request.retrieved_documents), "maxChunks": max_chunks},
         )
-        return request
+        return request, trace
 
     async def _generate_validated(
         self,
@@ -425,6 +437,42 @@ class AnalysisService:
             repair_attempts=attempts - 1,
             evidence_truncated=prompt.evidence_truncated,
         )
+
+
+def _build_retrieval_trace(
+    queries: list[str],
+    hits: list,
+    selected: list,
+    max_chunks: int,
+    per_chunk_cap: int,
+) -> RetrievalTrace:
+    """Evidence-selection trace from the merged retrieval hits (brief §21–22).
+
+    ``hits`` is the full merged candidate list (candidate_count); ``selected`` is the
+    slice that actually entered the evidence package (selected_count). Each item
+    carries its leg attribution from `sources` — vector similarity score, keyword
+    rank, dependency rank — which are NOT comparable to each other.
+    """
+    return RetrievalTrace(
+        queries=queries,
+        candidate_count=len(hits),
+        selected_count=len(selected),
+        max_chunks=max_chunks,
+        max_chars_per_chunk=per_chunk_cap,
+        items=[
+            RetrievalTraceItem(
+                id=f"chunk:{hit.chunk_id}",
+                document_type=hit.document_type,
+                title=hit.metadata.get("title") if hit.metadata else None,
+                path=hit.metadata.get("path") if hit.metadata else None,
+                score=hit.score,
+                vector_score=hit.sources.vector if hit.sources else None,
+                keyword_rank=hit.sources.keyword if hit.sources else None,
+                dependency_rank=hit.sources.dependency if hit.sources else None,
+            )
+            for hit in hits
+        ],
+    )
 
 
 def _check_incident_grounding(

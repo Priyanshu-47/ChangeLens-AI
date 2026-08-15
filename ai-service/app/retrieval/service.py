@@ -83,8 +83,15 @@ class RetrievalService:
             ranked = fused[: request.k]
         elif strategy == "vector":
             ranked = [(item_id, vector_scores[item_id]) for item_id in vector_ranking][: request.k]
-        else:
+        elif strategy == "keyword":
             ranked = [(item_id, keyword_scores[item_id]) for item_id in keyword_ranking][: request.k]
+        else:
+            # strategy == "dependency": the leg alone, ranked by its own stable order
+            # (chunk id), used by the evaluation runner's ablation mode.
+            ranked = [
+                (item_id, 1.0 / (i + 1))
+                for i, item_id in enumerate(dependency_ranking[: request.k])
+            ]
 
         results = self._hydrate(
             request.project_id, ranked, strategy, vector_scores, keyword_ranking, dependency_ranking

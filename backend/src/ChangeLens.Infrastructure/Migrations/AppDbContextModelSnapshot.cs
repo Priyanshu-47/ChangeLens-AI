@@ -86,6 +86,13 @@ namespace ChangeLens.Infrastructure.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<string>("TraceJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("TraceSchemaVersion")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(50)

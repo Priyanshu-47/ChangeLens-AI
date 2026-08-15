@@ -199,6 +199,45 @@ public sealed class IncidentInvestigationService(
         };
     }
 
+    /// <summary>
+    /// Phase 7: per-stage observability trace (docs/evaluation.md §5). Read permission;
+    /// non-members see 404, Viewers may view the trace. Stages carry real durations;
+    /// the retrieval trace shows per-item leg attribution. Never exposes prompts/secrets.
+    /// </summary>
+    public async Task<AnalysisTraceResponse> GetTraceAsync(Guid analysisId, CancellationToken ct)
+    {
+        var run = await db.Set<AnalysisRun>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == analysisId, ct)
+            ?? throw new NotFoundException("Analysis not found.");
+
+        await access.RequireAsync(
+            run.ProjectId, currentUser.UserId, currentUser.IsGlobalAdmin,
+            ProjectPermission.Read, ct);
+
+        AnalysisTraceResponse? stored = null;
+        if (run.TraceJson is not null)
+        {
+            // The persisted trace is camelCase (serialized with Web defaults).
+            stored = JsonSerializer.Deserialize<AnalysisTraceResponse>(run.TraceJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        return new AnalysisTraceResponse
+        {
+            AnalysisId = run.Id,
+            Type = run.Type,
+            Status = run.Status,
+            Model = run.Model,
+            PromptVersion = run.PromptVersion,
+            ResultSchemaVersion = run.ResultSchemaVersion,
+            TraceSchemaVersion = run.TraceSchemaVersion,
+            Stages = stored?.Stages ?? [],
+            Retrieval = stored?.Retrieval,
+            FailureCode = run.FailureCode,
+            FailureCategory = run.FailureCode is null ? null : AnalysisFailureCategory.For(run.FailureCode)
+        };
+    }
+
     private static InvestigationAcceptedResponse AcceptedResponse(Guid analysisId) => new()
     {
         AnalysisId = analysisId,

@@ -2,6 +2,7 @@ using System.Text.Json;
 using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Exceptions;
 using ChangeLens.Application.Ports;
+using ChangeLens.Application.Tracing;
 using ChangeLens.Domain.Analysis;
 using ChangeLens.Domain.Audit;
 using Microsoft.Extensions.Logging;
@@ -49,9 +50,15 @@ public sealed class ChangeRiskAnalysisService(
             "Change-risk analysis started for project {ProjectId} by user {UserId}",
             request.ProjectId, currentUser.UserId);
 
+        var trace = new AnalysisTraceBuilder();
+
         // 1. Roslyn change analysis: changed/impacted symbols, dependency graph,
         //    impacted APIs and external integrations (safe local git source).
-        var change = changeEngine.BuildChangeModel(request);
+        ChangeModelDto change;
+        using (trace.Stage("Roslyn + Dependency Graph"))
+        {
+            change = changeEngine.BuildChangeModel(request);
+        }
         request.ChangedFiles = change.ChangedFiles;
         request.ChangedSymbols = change.ChangedSymbols;
         request.ImpactedSymbols = change.ImpactedSymbols;
@@ -87,24 +94,37 @@ public sealed class ChangeRiskAnalysisService(
         ChangeRiskAnalysisResponse response;
         try
         {
-            response = await aiClient.AnalyzeChangeRiskAsync(request, ct);
+            using (trace.Stage("AI Analysis"))
+            {
+                response = await aiClient.AnalyzeChangeRiskAsync(request, ct);
+            }
             run.Status = "Succeeded";
             run.Model = response.Usage.Model;
             run.PromptVersion = response.Usage.PromptVersion;
             run.ResultJson = JsonSerializer.Serialize(response.Result, ResultJson);
             run.ResultSchemaVersion = "change-risk-v1";
             run.CompletedAtUtc = DateTime.UtcNow;
+            trace.SetRetrieval(response.Trace);
         }
         catch (ChangeLensException ex)
         {
             run.Status = "Failed";
+            run.FailureCode = FailureCodeFor(ex);
             run.Error = ex.Message;
             run.CompletedAtUtc = DateTime.UtcNow;
+            trace.Fail(run.FailureCode, ex.Message);
+            run.TraceJson = trace.Serialize();
+            run.TraceSchemaVersion = trace.Schema;
             await db.SaveChangesAsync(ct);
             throw;
         }
 
-        await db.SaveChangesAsync(ct);
+        using (trace.Stage("Persistence"))
+        {
+            run.TraceJson = trace.Serialize();
+            run.TraceSchemaVersion = trace.Schema;
+            await db.SaveChangesAsync(ct);
+        }
 
         logger.LogInformation(
             "Change-risk analysis completed for project {ProjectId}: {Changed} changed, " +
@@ -140,6 +160,15 @@ public sealed class ChangeRiskAnalysisService(
             AnalysisRunId = runId
         };
     }
+
+    private static string FailureCodeFor(ChangeLensException ex) => ex switch
+    {
+        AiValidationFailedException => AnalysisFailureCode.AiValidationFailed,
+        AiRateLimitedException => AnalysisFailureCode.LlmRateLimited,
+        AiTimeoutException => AnalysisFailureCode.AiTimeout,
+        AiUnavailableException => AnalysisFailureCode.AiUnavailable,
+        _ => AnalysisFailureCode.Internal
+    };
 
     private static string ChangeIdentifier(AnalyzeChangeRiskRequest request)
     {

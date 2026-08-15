@@ -133,10 +133,41 @@ class AnalysisUsage(ApiModel):
     evidence_truncated: bool = False
 
 
+class RetrievalTraceItem(ApiModel):
+    """One chunk that reached the evidence package, with leg attribution.
+
+    The three ``*_rank``/``vector_score`` fields are NOT directly comparable (vector
+    similarity and keyword/dependency ranks live on different scales — the UI must
+    show them as separate signals, never summed). Vector/keyword ranks are 1-based
+    positions inside that leg's candidate list.
+    """
+
+    id: str  # chunk:<uuid>
+    document_type: str
+    title: str | None = None
+    path: str | None = None
+    score: float | None = None
+    vector_score: float | None = None
+    keyword_rank: int | None = None
+    dependency_rank: int | None = None
+
+
+class RetrievalTrace(ApiModel):
+    """Evidence-selection trace: which chunks entered the prompt, and why (brief §21–22)."""
+
+    queries: list[str] = Field(default_factory=list)
+    candidate_count: int = 0
+    selected_count: int = 0
+    max_chunks: int = 0
+    max_chars_per_chunk: int = 0
+    items: list[RetrievalTraceItem] = Field(default_factory=list)
+
+
 class RiskAnalysisResponse(ApiModel):
     analysis_type: Literal["change-risk"] = "change-risk"
     result: RiskAnalysisResult
     usage: AnalysisUsage
+    trace: RetrievalTrace | None = None
 
 
 # --- incident investigation (Phase 5, brief §17–20) ---
@@ -205,6 +236,7 @@ class IncidentAnalysisResponse(ApiModel):
     analysis_type: Literal["incident"] = "incident"
     result: IncidentAnalysisResult
     usage: AnalysisUsage
+    trace: RetrievalTrace | None = None
 
 
 # --- retrieval / ingestion ---
