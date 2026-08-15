@@ -13,6 +13,10 @@ It combines source-code analysis (Roslyn), dependency-graph impact analysis, hyb
 
 Post-incident reviews are slow because evidence is scattered: git history, deployment logs, runbooks, past incidents, and source code live in different tools with different vocabularies. Risk analysis before a deploy is usually a manual reading of a diff. ChangeLens treats this as an engineering problem: a change model → a dependency graph → grounded evidence retrieval → schema-validated, evidence-cited analysis — with the system explicitly saying what it **does not know**.
 
+## Why I Built This
+
+I wanted to demonstrate production-grade AI application engineering end-to-end — not another chatbot or a thin RAG wrapper. ChangeLens is deliberately opinionated about where AI is and isn't used: LLMs handle reasoning and evidence synthesis over **structured, validated contracts**, while deterministic systems (Roslyn, the dependency graph, retrieval ranking, grounding, evaluation) do the work that must be exact. Every AI conclusion is traceable to evidence the user can open, and the system is honest about what it cannot measure (the evaluation section labels synthetic/mock results as such, and the live Gemini limitation is documented rather than hidden). The whole platform runs at **$0** on local Docker + PostgreSQL + mock providers, with CI to match.
+
 ## Why this matters (for a portfolio)
 
 - Two complete production workflows, both grounded and auditable.
@@ -51,6 +55,19 @@ flowchart TB
 ## Tech stack
 
 React 18 + TypeScript + Vite · ASP.NET Core 10 · FastAPI (Python 3.12+) · PostgreSQL + pgvector · Entity Framework Core + Alembic · Roslyn · tree-sitter · Gemini (provider abstraction) · GitHub Actions
+
+## Repository structure
+
+```
+frontend/    React SPA (login, projects, incidents, analyses, change risk, trace)
+backend/     ASP.NET Core 10 (domain, authz, orchestration, audit, Roslyn, tool execution)
+ai-service/  FastAPI (providers, prompts, structured output, hybrid RAG, evaluation runner)
+data/        demo corpus (AcmePay repo, 20 incidents, 5 runbooks) + golden dataset (v1)
+docs/        architecture, ADRs (12), API contract, evaluation, security, agent tools, costs,
+             demo script, interview prep, resume bullets, future roadmap
+scripts/     local PostgreSQL helpers
+.github/     $0 CI workflow (backend, Python, frontend, evaluation, secret scan)
+```
 
 ## Quick start (Docker — full stack)
 
@@ -115,7 +132,7 @@ Honest caveats: these are **synthetic-corpus + mock-embedding results that prove
 
 ## Screenshots
 
-Not captured in this environment — the UI is fully described and covered by 34 component tests (login, project dashboard, incident detail, async investigation, analysis result with evidence linking, grounding badge, unknowns, change-risk, trace + tool calls). See [docs/demo-script.md](docs/demo-script.md) for exactly what each screen shows.
+Not captured in this environment (no browser tooling) — the UI is fully described in [docs/demo-script.md](docs/demo-script.md) and covered by 34 component tests (login, project dashboard, incident detail, async investigation, analysis result with evidence linking, grounding badge, unknowns, change-risk, trace + tool calls). An honest placeholder and a capture how-to live in [docs/screenshots/README.md](docs/screenshots/README.md); no mockups are published.
 
 ## Documentation
 
@@ -140,9 +157,13 @@ Not captured in this environment — the UI is fully described and covered by 34
 | [docs/definition-of-done.md](docs/definition-of-done.md) | Definition of Done for the MVP |
 | [docs/adr/](docs/adr/) | Architecture Decision Records (12) |
 
+## Future roadmap
+
+Categorized as CURRENT / NEXT / FUTURE in [docs/future-roadmap.md](docs/future-roadmap.md): live Gemini schema compatibility, real-embedding evaluation, hosted evaluation dashboard, GitHub integration, and (only with measured need) a reranker — plus the explicit non-goals (multi-agent, arbitrary tools, distributed infrastructure, LLM-judge as primary evaluation).
+
 ## Status
 
-**Phases 0–9 complete.** Phase 9 delivered production hardening + deployment readiness: full four-service Docker Compose (frontend nginx container, DB-gated healthchecks, non-root everywhere), controlled CORS, in-memory rate limiting, non-dev secret validation, $0 GitHub Actions CI (including the evaluation runner), and per-case tool trace in evaluation reports. **Phase 10 (optional AWS) only after the local MVP is stable.**
+**Phases 0–10 complete.** The engineering project is feature-complete; Docker installation was attempted and blocked in the authoring environment (details in the Phase 10 report), so `docker compose up --build` on a Docker-equipped machine is the one outstanding verification item. Portfolio release docs: [docs/interview-prep.md](docs/interview-prep.md), [docs/resume-bullets.md](docs/resume-bullets.md), [docs/project-description.md](docs/project-description.md). Phase 9 delivered production hardening + deployment readiness: full four-service Docker Compose (frontend nginx container, DB-gated healthchecks, non-root everywhere), controlled CORS, in-memory rate limiting, non-dev secret validation, $0 GitHub Actions CI (including the evaluation runner), and per-case tool trace in evaluation reports. **Phase 10 (optional AWS) only after the local MVP is stable.**
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
@@ -156,4 +177,5 @@ Not captured in this environment — the UI is fully described and covered by 34
 | 7 | Evaluation + AI observability (runner, trace, retrieval explorer) | ✅ |
 | 8 | Controlled AI tools + tool tracing (registry, loop, audit, trace UI) | ✅ |
 | 9 | Production hardening + deployment readiness (Docker, CI, security) | ✅ |
-| 10 | AWS deployment (optional, only after local is stable) | ⏳ |
+| 10 | Final verification + portfolio release | ✅ |
+| — | AWS deployment (optional, only after local is stable) | ⏳ |
