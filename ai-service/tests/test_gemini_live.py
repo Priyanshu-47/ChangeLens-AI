@@ -31,7 +31,7 @@ async def test_live_gemini_structured_risk_analysis():
         internal_api_key="test-internal-key",
         ai_provider="gemini",
         gemini_api_key=os.environ["GEMINI_API_KEY"],
-        gemini_text_model=os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.7-flash"),
+        gemini_text_model=os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.1-flash-lite"),
         ai_max_repair_attempts=2,
     )
     provider = build_provider(settings)
@@ -39,13 +39,28 @@ async def test_live_gemini_structured_risk_analysis():
 
     request = RiskAnalysisRequest(
         project_id="p1",
-        change_summary="Changed token refresh logic in AuthClient.cs to use a rotated signing key.",
+        change_summary="JWT signing key rotation was modified in TokenService. Assess potential release risk.",
         changed_files=[
             {
-                "path": "src/AuthClient.cs",
+                "path": "src/AcmePay.Application/Auth/TokenService.cs",
                 "change_type": "modified",
                 "language": "csharp",
-                "symbols_changed": ["RefreshAsync"],
+                "symbols_changed": ["IssueServiceToken", "SigningKeys"],
+            }
+        ],
+        runbooks=[
+            {
+                "id": "authentication-failure",
+                "title": "Authentication failure runbook",
+                "content": "When callers see 401 invalid signature after a key rotation, confirm the previous "
+                "signing key remains in Auth:JwtSigningKeys until all in-flight tokens expire.",
+            }
+        ],
+        historical_incidents=[
+            {
+                "incident_id": "auth-001-jwt-key-rotation",
+                "reference": "incidents/auth-001.md",
+                "summary": "401s across services after a signing key was rotated without keeping the previous key in the history.",
             }
         ],
     )
@@ -57,7 +72,8 @@ async def test_live_gemini_structured_risk_analysis():
     # Grounding is enforced server-side: every factor references an input evidence id.
     for factor in response.result.risk_factors:
         assert any(
-            e.reference == "change:src/AuthClient.cs" for e in factor.evidence
+            e.reference == "change:src/AcmePay.Application/Auth/TokenService.cs"
+            for e in factor.evidence
         ), f"factor {factor.title!r} is not grounded"
     assert response.usage.validation_status in {"valid", "repaired"}
     assert response.usage.model

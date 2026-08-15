@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     # Default model is a Phase 0 decision (docs/llm-integration.md): a current GA model,
     # configurable via env. Never hardcode a model inside business logic.
-    gemini_text_model: str = "gemini-3.7-flash"
+    gemini_text_model: str = "gemini-3.1-flash-lite"
     gemini_timeout_seconds: float = 60.0
     gemini_max_retries: int = 3
     gemini_max_output_tokens: int = 8192

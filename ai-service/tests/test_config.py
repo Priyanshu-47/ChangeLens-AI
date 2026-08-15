@@ -29,7 +29,7 @@ def test_mock_provider_needs_no_gemini_key():
 def test_default_model_is_phase0_decision():
     settings = Settings(internal_api_key="test-internal-key", ai_provider="mock")
     # Phase 0 (docs/llm-integration.md): current GA model, configurable via env.
-    assert settings.gemini_text_model == "gemini-3.7-flash"
+    assert settings.gemini_text_model == "gemini-3.1-flash-lite"
 
 
 def test_default_embedding_model_is_current_ga():

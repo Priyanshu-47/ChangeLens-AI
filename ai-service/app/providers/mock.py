@@ -42,7 +42,7 @@ class MockAIProvider:
 
     provider_name = "mock"
 
-    def __init__(self, *, model: str = "mock-gemini-3.7-flash", latency_ms: int | None = None):
+    def __init__(self, *, model: str = "mock-gemini-3.1-flash-lite", latency_ms: int | None = None):
         self._model = model
         self._fixed_latency_ms = latency_ms
 
