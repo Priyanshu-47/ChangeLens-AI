@@ -17,6 +17,7 @@ import {
   RemediationSection,
   UnknownsBlock,
 } from '../components/Investigation';
+import { TraceSection } from '../components/Trace';
 
 function isIncidentResult(result: unknown): result is IncidentInvestigationResult {
   return (
@@ -154,6 +155,9 @@ export function AnalysisPage() {
           (re-run) — or see the raw result below.
         </p>
       ) : null}
+
+      {/* Phase 7 observability trace (stages + retrieval explorer) */}
+      <TraceSection analysisId={run.id} status={run.status} />
 
       {/* Polling indicator when stuck-but-settled without a terminal run */}
       {settled && !run ? <EmptyState icon="◫" title="Analysis not found" body="It may have been removed or you may not have access." /> : null}

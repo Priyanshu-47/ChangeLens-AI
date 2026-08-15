@@ -1,6 +1,7 @@
 import { api } from './client';
 import type {
   AnalysisRun,
+  AnalysisTrace,
   AuthResponse,
   ChangeRiskRequest,
   ChangeRiskResponse,
@@ -75,6 +76,9 @@ export const incidentsApi = {
 export const analysesApi = {
   get(analysisId: string) {
     return api<AnalysisRun>(`/analyses/${analysisId}`);
+  },
+  trace(analysisId: string) {
+    return api<AnalysisTrace>(`/analyses/${analysisId}/trace`);
   },
   list(
     projectId: string,

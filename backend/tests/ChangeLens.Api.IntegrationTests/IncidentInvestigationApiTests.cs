@@ -95,6 +95,45 @@ public sealed class IncidentInvestigationApiTests
     }
 
     [Fact]
+    public async Task Engineer_GetsAnalysisTrace_AfterCompletedRun()
+    {
+        var ai = new FakeAiClient();
+        var api = NewApi(ai);
+        var (token, _) = await api.RegisterAsync($"inc-trace-{Guid.NewGuid():N}@test.dev");
+        var projectId = await api.CreateProjectAsync(token, "Trace Project");
+        var incidentId = await CreateIncidentAsync(api, token, projectId, "Trace incident");
+
+        using var client = api.NewClient(token);
+        var submit = await client.PostAsJsonAsync(
+            $"/api/v1/incidents/{incidentId}/investigate", new { });
+        var accepted = await submit.Content.ReadFromJsonAsync<InvestigationAcceptedResponse>();
+        await PollUntilTerminalAsync(api, token, accepted!.AnalysisId);
+
+        var traceResponse = await client.GetAsync($"/api/v1/analyses/{accepted.AnalysisId}/trace");
+        traceResponse.EnsureSuccessStatusCode();
+        var trace = await traceResponse.Content.ReadFromJsonAsync<AnalysisTraceResponse>();
+
+        Assert.NotNull(trace);
+        Assert.Equal(accepted.AnalysisId, trace!.AnalysisId);
+        Assert.Equal("IncidentInvestigation", trace.Type);
+        Assert.Equal("Succeeded", trace.Status);
+        Assert.Equal("trace-v1", trace.TraceSchemaVersion);
+
+        var stageNames = trace.Stages.Select(s => s.Name).ToList();
+        Assert.Contains("Context", stageNames);
+        Assert.Contains("AI Analysis", stageNames);
+        Assert.Contains("Persistence", stageNames);
+        Assert.All(trace.Stages, s => Assert.True(s.DurationMs >= 0));
+
+        Assert.NotNull(trace.Retrieval);
+        Assert.Equal(1, trace.Retrieval!.SelectedCount);
+        Assert.Equal("chunk:auth-001", trace.Retrieval.Items[0].Id);
+        Assert.Equal(1, trace.Retrieval.Items[0].KeywordRank);
+        Assert.Null(trace.FailureCode);
+        Assert.Null(trace.FailureCategory);
+    }
+
+    [Fact]
     public async Task CrossProjectIsolation_UserCannotInvestigateOrViewOtherProject()
     {
         var ai = new FakeAiClient();
@@ -140,6 +179,10 @@ public sealed class IncidentInvestigationApiTests
         using var clientB2 = api.NewClient(tokenB);
         var crossStatusB = await clientB2.GetAsync($"/api/v1/analyses/{acceptedA.AnalysisId}");
         Assert.Equal(HttpStatusCode.NotFound, crossStatusB.StatusCode);
+
+        // B cannot read A's analysis trace either (same authorization boundary).
+        var crossTraceB = await clientB2.GetAsync($"/api/v1/analyses/{acceptedA.AnalysisId}/trace");
+        Assert.Equal(HttpStatusCode.NotFound, crossTraceB.StatusCode);
     }
 
     [Fact]
@@ -292,6 +335,25 @@ public sealed class IncidentInvestigationApiTests
                     Model = "mock-gemini-3.1-flash-lite",
                     PromptVersion = "incident-v1",
                     ValidationStatus = "valid"
+                },
+                Trace = new RetrievalTraceDto
+                {
+                    Queries = ["HTTP 401 after JWT signing-key rotation"],
+                    CandidateCount = 2,
+                    SelectedCount = 1,
+                    MaxChunks = 20,
+                    MaxCharsPerChunk = 12000,
+                    Items =
+                    [
+                        new RetrievalTraceItemDto
+                        {
+                            Id = "chunk:auth-001",
+                            DocumentType = "Runbook",
+                            Path = "auth-001-jwt-key-rotation.md",
+                            KeywordRank = 1,
+                            VectorScore = 0.88
+                        }
+                    ]
                 }
             });
         }

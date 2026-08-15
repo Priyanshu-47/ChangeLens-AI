@@ -234,6 +234,87 @@ public sealed class IncidentInvestigationServiceTests : ServiceTestBase
             () => Service.GetStatusAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
+    // ── trace (Phase 7 observability) ─────────────────────────────────────────
+
+    [Fact]
+    public async Task GetTrace_ReturnsStagesRetrievalAndFailureCategory()
+    {
+        var incidentId = await CreateIncidentAsync();
+        var submitted = await Service.SubmitAsync(incidentId, new InvestigateIncidentRequest(), CancellationToken.None);
+        var run = Context.Set<AnalysisRun>().Single(r => r.Id == submitted.AnalysisId);
+        run.Status = AnalysisStatus.Succeeded;
+        run.Model = "mock";
+        run.PromptVersion = "incident-v1";
+        run.ResultSchemaVersion = "incident-v1";
+        run.TraceSchemaVersion = "trace-v1";
+        run.TraceJson = """
+        {"schemaVersion":"trace-v1","totalDurationMs":120,"stages":[
+          {"name":"Context","status":"Completed","durationMs":5},
+          {"name":"AI Analysis","status":"Completed","durationMs":95},
+          {"name":"Persistence","status":"Completed","durationMs":10}
+        ],"retrieval":{"queries":["HTTP 401 after JWT signing-key rotation"],"candidateCount":3,"selectedCount":2,"maxChunks":20,"maxCharsPerChunk":12000,"items":[
+          {"id":"chunk:abc","documentType":"Runbook","path":"auth-001-jwt-key-rotation.md","keywordRank":1}
+        ]},"failure":null}
+        """;
+        await Context.SaveChangesAsync(CancellationToken.None);
+
+        var trace = await Service.GetTraceAsync(submitted.AnalysisId, CancellationToken.None);
+
+        Assert.Equal(submitted.AnalysisId, trace.AnalysisId);
+        Assert.Equal("trace-v1", trace.TraceSchemaVersion);
+        Assert.Equal("mock", trace.Model);
+        Assert.Equal(3, trace.Stages.Count);
+        Assert.Contains(trace.Stages, s => s.Name == "Context" && s.DurationMs == 5);
+        Assert.NotNull(trace.Retrieval);
+        Assert.Equal(2, trace.Retrieval!.SelectedCount);
+        Assert.Equal("chunk:abc", trace.Retrieval.Items[0].Id);
+        Assert.Equal(1, trace.Retrieval.Items[0].KeywordRank);
+        Assert.Null(trace.FailureCode);
+        Assert.Null(trace.FailureCategory);
+    }
+
+    [Fact]
+    public async Task GetTrace_FailedRun_MapsFailureCategory()
+    {
+        var incidentId = await CreateIncidentAsync();
+        var submitted = await Service.SubmitAsync(incidentId, new InvestigateIncidentRequest(), CancellationToken.None);
+        var run = Context.Set<AnalysisRun>().Single(r => r.Id == submitted.AnalysisId);
+        run.Status = AnalysisStatus.Failed;
+        run.FailureCode = AnalysisFailureCode.LlmRateLimited;
+        run.Error = "The AI provider is rate limited.";
+        run.TraceSchemaVersion = "trace-v1";
+        run.TraceJson = """{"schemaVersion":"trace-v1","stages":[],"retrieval":null,"failure":null}""";
+        await Context.SaveChangesAsync(CancellationToken.None);
+
+        var trace = await Service.GetTraceAsync(submitted.AnalysisId, CancellationToken.None);
+
+        Assert.Equal(AnalysisStatus.Failed, trace.Status);
+        Assert.Equal(AnalysisFailureCode.LlmRateLimited, trace.FailureCode);
+        Assert.Equal(AnalysisFailureCategory.RateLimit, trace.FailureCategory);
+    }
+
+    [Fact]
+    public async Task GetTrace_NonMember_Gets404()
+    {
+        var incidentId = await CreateIncidentAsync();
+        var submitted = await Service.SubmitAsync(incidentId, new InvestigateIncidentRequest(), CancellationToken.None);
+        var outsider = FakeCurrentUser.Standard();
+
+        var ex = await Assert.ThrowsAsync<NotFoundException>(
+            () => new IncidentInvestigationService(
+                Context, Access, outsider, Audit, _queue, NullLogger<IncidentInvestigationService>.Instance)
+                .GetTraceAsync(submitted.AnalysisId, CancellationToken.None));
+
+        Assert.Equal("not_found", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetTrace_UnknownAnalysis_Gets404()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => Service.GetTraceAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
     // ── list (Phase 6: dashboard + trace views) ───────────────────────────────
 
     [Fact]

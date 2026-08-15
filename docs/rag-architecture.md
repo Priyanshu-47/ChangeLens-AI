@@ -190,6 +190,7 @@ records what is real in the code today, verified against `backend/` and `ai-serv
   evaluation shows RRF insufficient).
 - Structured (non-text) incident fields, OpenAPI path-item chunker, JSON/YAML structural
   chunker, and the identifier-aware tokenizer for the keyword leg.
-- Persisting per-leg retrieval queries/ranks into `analysis_runs` for the evaluation
-  engine (Phase 8).
+- Per-analysis traces persist the **selected** evidence with per-leg attribution
+  (Phase 7, docs/evaluation.md §5); full per-leg candidate lists are available in
+  evaluation runs (the runner computes them per case).
 - No measured accuracy metrics exist — the golden dataset defines *targets* only.

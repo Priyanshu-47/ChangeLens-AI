@@ -21,7 +21,7 @@
 | R13 | Roslyn graph is best-effort semantics (unresolved references, top-level statements, exotic syntax) → missing edges | M | M | Semantic model over syntax trees + documented extraction scope; edge types limited to what Roslyn proves; unknown edges surface as warnings, never as claims; deterministic fixture tests pin the supported shapes | 4 |
 | R14 | Local-git change source misused (traversal, weird revisions, repo escaping sandbox) | L | H | Path/revision validation, fixed argument list (no shell), repository restricted to configured root, project isolation regression tests; analyzed source is parsed, never executed | 4 |
 | R15 | In-memory dependency graph rebuilt per analysis → latency / no cross-analysis reuse | M | L | Demo-scale graph builds in ~1–2 s; deterministic change identifiers allow future caching in Postgres; measured durations recorded, no fabricated perf claims | 4 |
-| R16 | Dependency retrieval leg ranks by connectivity, so top hits may not match the change text | M | M | Dependency is an explicit third RRF list, never blended into vector scores; per-leg metadata explains *why* each hit surfaced; evaluation (Phase 8) will compare modes | 4 |
+| R16 | Dependency retrieval leg ranks by connectivity, so top hits may not match the change text | M | M | Dependency is an explicit third RRF list, never blended into vector scores; per-leg metadata explains *why* each hit surfaced; Phase 7 evaluation compares modes (dependency-only recall is expected near zero on retrieval-style golden queries — reported honestly) | 4 |
 
 L = likelihood (L/M/H), I = impact (L/M/H).
 
@@ -47,7 +47,7 @@ L = likelihood (L/M/H), I = impact (L/M/H).
 
 ## 3. Open questions for review
 
-1. **Reranker in MVP?** Default: no (RRF only). If the demo shows weak ranking on runbooks, add a local cross-encoder before Phase 8 eval. Confirm.
+1. **Reranker in MVP?** Default: no (RRF only). If the demo shows weak ranking on runbooks, add a local cross-encoder before a future eval pass. Confirm.
 2. **Hosting demo appetite?** Local-Docker-only MVP, or should Phase 9 also stand up a free-tier URL (accepting cold starts/expiry) for the README? Cost stays $0 either way.
 3. **Demo repository choice:** a small public .NET sample repo (e.g. a stripped `eShop`-style or custom demo service) seeded in `data/` — confirm before Phase 3 seeds it.
 4. **Golden dataset size:** 15–25 cases proposed (S M). Any preference for a specific incident archetype mix (deploy regression, config drift, auth, data migration)?
@@ -58,4 +58,4 @@ L = likelihood (L/M/H), I = impact (L/M/H).
 
 - A hard requirement for multi-language deep analysis ⇒ push tree-sitter symbol analysis into Phase 3 scope (larger).
 - A requirement to demo with real GitHub PRs ⇒ add a GitHub App webhook + git-diff fetch phase (post-MVP).
-- Measured retrieval quality below target in Phase 8 ⇒ add reranker + query rewriting before shipping the eval dashboard.
+- Measured retrieval quality below target in Phase 7 ⇒ add reranker + query rewriting before shipping the eval dashboard (metrics are synthetic-corpus/mock-embedding numbers, not production claims).

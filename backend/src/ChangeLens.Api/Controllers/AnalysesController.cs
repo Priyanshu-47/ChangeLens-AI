@@ -63,6 +63,18 @@ public sealed class AnalysesController(
         => Ok(await investigations.GetStatusAsync(analysisId, ct));
 
     /// <summary>
+    /// Phase 7: per-stage observability trace of an analysis (docs/evaluation.md §5).
+    /// Authorization matches the analysis itself (Read; non-members see 404) — a user
+    /// can never read another project's trace.
+    /// </summary>
+    [HttpGet("{analysisId:guid}/trace")]
+    [ProducesResponseType<AnalysisTraceResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Trace(Guid analysisId, CancellationToken ct)
+        => Ok(await investigations.GetTraceAsync(analysisId, ct));
+
+    /// <summary>
     /// Phase 2 vertical slice: POST /api/v1/analyses/change-risk → .NET validates and
     /// authorizes, then calls the AI service (FastAPI → Gemini) and returns the
     /// schema-validated risk report. Phase 4 converts this to the async

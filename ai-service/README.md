@@ -165,12 +165,29 @@ Migrations touch the `ai` schema only (ADR-0003); the `app` schema belongs to .N
 
 `app/providers/base.py` defines the `IAIProvider` protocol; `GeminiProvider` is the MVP adapter and `MockAIProvider` the deterministic stand-in. The analysis service depends only on the protocol, so an `OpenAIProvider`/`BedrockProvider` can be added without touching orchestration or validation ([ADR-0005](../docs/adr/0005-llm-provider-abstraction.md)). Embeddings use the separate `IEmbeddingProvider` protocol (`app/embeddings/base.py`, ADR-0006) with `GeminiEmbeddingProvider` and `MockEmbeddingProvider` implementations.
 
-## Known limitations (Phase 5)
+## Evaluation (Phase 7)
+
+The deterministic evaluation runner (docs/evaluation.md) measures retrieval per leg
+(vector / keyword / dependency / hybrid) over the versioned 20-case golden dataset
+(`v1`), plus schema/grounding/coverage checks through the mock-AI pipeline:
+
+```bash
+DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" \
+  ./.venv/Scripts/python -m app.evaluation.run
+```
+
+It forces `AI_PROVIDER=mock` / `EMBEDDING_PROVIDER=mock` — **zero Gemini calls, no API
+key**. Reports land in gitignored `data/evaluation-output/` (`evaluation-report.json` +
+`.md`); `--baseline <previous report>` prints regression deltas. Analysis responses also
+carry a `trace` block (queries, candidate/selected counts, per-item leg attribution) that
+the backend persists for the trace endpoint.
+
+## Known limitations (Phase 7)
 
 - **No reranker** — intentionally not implemented (MVP = RRF; revisit only if evaluation shows RRF insufficient, docs/rag-architecture.md §4).
-- **Gemini structured-output gap** — the real text provider returns HTTP 400 for the current `responseSchema` shapes (the `api_safe_schema` normalizer fixed `$ref`/`$defs`/`enum` for the flash model, but `gemini-3.1-flash-lite` rejects the schema shape; the same applies to the new incident schema). Phase 5 tests use `MockAIProvider`; live Gemini text calls are quota-gated and NOT claimed to work until resolved.
-- **Incident retrieval queries are heuristic** — title + symptoms + service + symbol-like terms; the per-leg trace persistence for evaluation lands in Phase 8.
-- **No measured retrieval accuracy** — the golden dataset (`data/golden-dataset/cases.json`) defines targets; the evaluation runner lands in Phase 8.
+- **Gemini structured-output gap** — the real text provider returns HTTP 400 for the current `responseSchema` shapes (the `api_safe_schema` normalizer fixed `$ref`/`$defs`/`enum` for the flash model, but `gemini-3.1-flash-lite` rejects the schema shape; the same applies to the new incident schema). Phase 5+ tests use `MockAIProvider`; live Gemini text calls are quota-gated and NOT claimed to work until resolved.
+- **Measured numbers are synthetic-corpus/mock-embedding results** — they prove the framework, not production accuracy; no live accuracy claims until a real-provider eval pass.
+- **Incident retrieval queries are heuristic** — title + symptoms + service + symbol-like terms; selected-evidence leg attribution is traced (Phase 7), full per-leg candidate lists only in evaluation runs.
 - **Structured incident fields, OpenAPI/JSON/YAML chunkers, identifier-aware tokenizer** for the keyword leg — deferred; unknown document types fall back to heading sections / one file chunk today.
 - The `app` schema is never touched by this service (ADR-0003).
 

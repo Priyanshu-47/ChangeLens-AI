@@ -81,6 +81,9 @@ public sealed class ChangeRiskAnalysisResponse
 
     public AnalysisUsageDto Usage { get; init; } = new();
 
+    /// <summary>Retrieval trace from the AI service (Phase 7 observability).</summary>
+    public RetrievalTraceDto? Trace { get; init; }
+
     /// <summary>Id of the persisted analysis_runs row (audit trail, ADR-0009).</summary>
     public Guid? AnalysisRunId { get; init; }
 }
@@ -166,4 +169,32 @@ public sealed class AnalysisUsageDto
     public string ValidationStatus { get; init; } = "valid";
     public int RepairAttempts { get; init; }
     public bool EvidenceTruncated { get; init; }
+}
+
+// ── Retrieval trace (Phase 7, docs/evaluation.md §5) ───────────────────────
+
+/// <summary>One chunk that reached the evidence package, with per-leg attribution.
+/// Vector score and keyword/dependency ranks are NOT comparable — the UI must show
+/// them as separate signals, never summed.</summary>
+public sealed class RetrievalTraceItemDto
+{
+    public string Id { get; init; } = string.Empty;
+    public string DocumentType { get; init; } = string.Empty;
+    public string? Title { get; init; }
+    public string? Path { get; init; }
+    public double? Score { get; init; }
+    public double? VectorScore { get; init; }
+    public int? KeywordRank { get; init; }
+    public int? DependencyRank { get; init; }
+}
+
+/// <summary>Evidence-selection trace: which chunks entered the prompt and why.</summary>
+public sealed class RetrievalTraceDto
+{
+    public List<string> Queries { get; init; } = [];
+    public int CandidateCount { get; init; }
+    public int SelectedCount { get; init; }
+    public int MaxChunks { get; init; }
+    public int MaxCharsPerChunk { get; init; }
+    public List<RetrievalTraceItemDto> Items { get; init; } = [];
 }

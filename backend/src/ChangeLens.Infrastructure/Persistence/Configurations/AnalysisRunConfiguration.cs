@@ -24,6 +24,8 @@ public sealed class AnalysisRunConfiguration : IEntityTypeConfiguration<Analysis
         builder.Property(r => r.ResultSchemaVersion).HasMaxLength(50);
         builder.Property(r => r.FailureCode).HasMaxLength(50);
         builder.Property(r => r.Error).HasMaxLength(2000);
+        builder.Property(r => r.TraceJson).HasColumnType("jsonb");
+        builder.Property(r => r.TraceSchemaVersion).HasMaxLength(50);
 
         builder.HasOne(r => r.Project)
             .WithMany()

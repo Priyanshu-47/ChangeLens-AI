@@ -182,6 +182,60 @@ public sealed class IncidentInvestigationOrchestratorTests : ServiceTestBase
     }
 
     [Fact]
+    public async Task Success_PersistsTrace_WithStagesAndRetrieval()
+    {
+        var (_, incidentId, runId, _) = await CreateIncidentWithRunAsync();
+
+        await Orchestrator().RunAsync(new AnalysisJob(runId, Guid.Empty, incidentId, null), CancellationToken.None);
+
+        var run = Context.Set<AnalysisRun>().Single(r => r.Id == runId);
+        Assert.Equal("trace-v1", run.TraceSchemaVersion);
+        Assert.NotNull(run.TraceJson);
+
+        using var doc = JsonDocument.Parse(run.TraceJson!);
+        var root = doc.RootElement;
+        var stages = root.GetProperty("stages").EnumerateArray()
+            .Select(s => s.GetProperty("name").GetString())
+            .ToList();
+        Assert.Contains("Context", stages);
+        Assert.Contains("AI Analysis", stages);
+        Assert.Contains("Persistence", stages);
+        // All stages carry real durations.
+        Assert.All(
+            root.GetProperty("stages").EnumerateArray(),
+            s => Assert.True(s.GetProperty("durationMs").GetInt64() >= 0));
+        // Retrieval trace from the AI service is attached verbatim.
+        var retrieval = root.GetProperty("retrieval");
+        Assert.Equal(2, retrieval.GetProperty("selectedCount").GetInt32());
+        Assert.Equal("chunk:abc", retrieval.GetProperty("items")[0].GetProperty("id").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("failure").ValueKind);
+    }
+
+    [Fact]
+    public async Task Failure_PersistsTrace_WithFailureCategory()
+    {
+        var (_, incidentId, runId, _) = await CreateIncidentWithRunAsync();
+        _ai.Then(_ => throw new AiUnavailableException("down"));
+
+        await Orchestrator(new AnalysisOptions { MaxRetries = 0 })
+            .RunAsync(new AnalysisJob(runId, Guid.Empty, incidentId, null), CancellationToken.None);
+
+        var run = Context.Set<AnalysisRun>().Single(r => r.Id == runId);
+        Assert.Equal(AnalysisStatus.Failed, run.Status);
+        Assert.NotNull(run.TraceJson);
+
+        using var doc = JsonDocument.Parse(run.TraceJson!);
+        var root = doc.RootElement;
+        Assert.Equal(AnalysisFailureCode.AiUnavailable, root.GetProperty("failure").GetProperty("code").GetString());
+        Assert.Equal(AnalysisFailureCategory.AiProvider, root.GetProperty("failure").GetProperty("category").GetString());
+        // The AI stage is marked Failed with the category recorded.
+        var aiStage = root.GetProperty("stages").EnumerateArray()
+            .Single(s => s.GetProperty("name").GetString() == "AI Analysis");
+        Assert.Equal("Failed", aiStage.GetProperty("status").GetString());
+        Assert.Equal(AnalysisFailureCategory.AiProvider, aiStage.GetProperty("metadata").GetProperty("failureCategory").GetString());
+    }
+
+    [Fact]
     public async Task Failure_IsAudited_AsAnalysisFailed()
     {
         var (_, incidentId, runId, _) = await CreateIncidentWithRunAsync();
@@ -217,7 +271,33 @@ public sealed class IncidentInvestigationOrchestratorTests : ServiceTestBase
             ],
             Remediation = new RemediationDto { InsufficientEvidence = false }
         },
-        Usage = new AnalysisUsageDto { Model = "mock", PromptVersion = "incident-v1", ValidationStatus = "valid" }
+        Usage = new AnalysisUsageDto { Model = "mock", PromptVersion = "incident-v1", ValidationStatus = "valid" },
+        Trace = new RetrievalTraceDto
+        {
+            Queries = ["HTTP 401 after JWT signing-key rotation"],
+            CandidateCount = 3,
+            SelectedCount = 2,
+            MaxChunks = 20,
+            MaxCharsPerChunk = 12000,
+            Items =
+            [
+                new RetrievalTraceItemDto
+                {
+                    Id = "chunk:abc",
+                    DocumentType = "Runbook",
+                    Path = "auth-001-jwt-key-rotation.md",
+                    KeywordRank = 1,
+                    VectorScore = 0.9
+                },
+                new RetrievalTraceItemDto
+                {
+                    Id = "chunk:def",
+                    DocumentType = "Incident",
+                    Path = "authentication-failure.md",
+                    KeywordRank = 2
+                }
+            ]
+        }
     };
 
     private sealed class FakeAiClient : IAiServiceClient

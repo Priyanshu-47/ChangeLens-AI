@@ -115,8 +115,8 @@ ids by the grounding check. Retrieval queries are generated server-side from the
 context (title, symptom/error messages, service, symbol-like terms) preserving exact
 identifiers for the keyword leg (brief §13–14).
 
-### `POST /internal/v1/evaluations/run` (Phase 8)
-`{ "datasetId": "…", "strategies": ["keyword", "vector", "hybrid", "pipeline"], "limit": 20 }` → 202; results land in the `ai` schema and are also returned for the backend to persist in `evaluation_runs`.
+### Evaluation (Phase 7)
+The Phase 7 evaluation runner is a **local CLI** (`python -m app.evaluation.run`, docs/evaluation.md) — it drives retrieval + the mock-AI pipeline directly against the `ai` schema and writes reports to gitignored `data/evaluation-output/`. `POST /internal/v1/evaluations/run` remains deferred; a future backend-hosted evaluation endpoint would mirror this contract. Retrieval responses now include a `trace` block (queries, candidate/selected counts, budgets, per-item vector/keyword/dependency attribution) that the backend persists as `analysis_runs.TraceJson`.
 
 ### Health
 `GET /internal/v1/health/live` (process up), `GET /internal/v1/health/ready` (DB reachable, configured embedding/LLM models resolvable — **this is where a misconfigured/deprecated model name is caught at startup**, see [llm-integration.md](llm-integration.md)).

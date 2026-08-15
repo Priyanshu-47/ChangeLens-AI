@@ -10,7 +10,7 @@
 - [ ] **Hybrid retrieval is real:** retrieval uses vector + keyword + metadata filtering + RRF (never vector-only); results show per-source scores. (P3)
 - [ ] **Project isolation:** a user of project A can never retrieve or view project B data, verified by tests. (P1, P3)
 - [ ] **Controlled tool use:** at least three tools (e.g. `search_incidents`, `get_deployment`, `get_logs`) can be proposed by the AI, executed only with backend authorization, with every call audited and visible in the trace. (P6)
-- [ ] **Evaluation is honest:** the evaluation dashboard shows only persisted, real run results — including at least one strategy comparison (keyword vs vector vs hybrid vs pipeline) with Recall@K, precision, MRR, groundedness, latency, tokens, estimated cost, and schema-validation-failure counts, labeled with dataset size. (P7)
+- [x] **Evaluation is honest:** the Phase 7 runner produces real JSON/Markdown reports with per-leg Recall@K / Precision@K / MRR / Hit Rate over the versioned 20-case golden dataset, plus schema-validity, mechanical grounding, and evidence-coverage counts — using mock providers (zero Gemini). Hybrid is not claimed superior unless the measured numbers show it; metrics are labeled as synthetic-corpus/mock-embedding results. (P7)
 - [ ] **AI trace view:** any analysis shows model, prompt version, retrieval queries + retrieved documents, tool calls, tokens, latency, estimated cost, validation + guardrail status. (P8)
 
 ## 2. Quality & correctness

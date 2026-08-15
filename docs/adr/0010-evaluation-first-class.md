@@ -1,6 +1,6 @@
 # ADR-0010: Evaluation is a first-class feature with a golden dataset
 
-- **Status:** Accepted
+- **Status:** Accepted (implemented in Phase 7 — see [docs/evaluation.md](../evaluation.md); the hosted-run endpoint was deferred in favor of the deterministic local CLI)
 - **Date:** 2026-08-14
 
 ## Context
