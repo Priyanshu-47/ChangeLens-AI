@@ -3,6 +3,7 @@ using ChangeLens.Application.Services;
 using ChangeLens.Domain.Incidents;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ChangeLens.Api.Controllers;
 
@@ -75,10 +76,12 @@ public sealed class IncidentsController(
     /// A client RequestId is idempotent while the run is outstanding.
     /// </summary>
     [HttpPost("{incidentId:guid}/investigate")]
+    [EnableRateLimiting("analysis")]
     [ProducesResponseType<InvestigationAcceptedResponse>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Investigate(
         Guid incidentId,
         [FromBody] InvestigateIncidentRequest? request,

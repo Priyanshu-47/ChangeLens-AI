@@ -102,6 +102,11 @@ class ToolsCaseResult:
     skipped_reason: str | None = None
     proposals: int = 0
     proposals_valid: int = 0
+    # Python never executes tools, so rejected/failed are structural zeros at the
+    # AI-service boundary; .NET integration tests cover authorization/rejection.
+    rejected: int = 0
+    failed: int = 0
+    tool_call_count: int = 0
     loop_completed: bool | None = None
     grounding_after_tools: bool | None = None
     tool_names: list[str] = field(default_factory=list)
@@ -389,6 +394,7 @@ class EvaluationRunner:
             if turn1.kind != "tool_call" or turn1.tool_call is None:
                 return ToolsCaseResult(
                     status="evaluated", proposals=0, proposals_valid=0,
+                    tool_call_count=0, rejected=0, failed=0,
                     loop_completed=False, grounding_after_tools=False,
                 )
             proposals += 1
@@ -415,7 +421,8 @@ class EvaluationRunner:
             if turn2.kind != "tool_call" or turn2.tool_call is None:
                 return ToolsCaseResult(
                     status="evaluated", proposals=proposals,
-                    proposals_valid=proposals_valid, loop_completed=False,
+                    proposals_valid=proposals_valid, tool_call_count=proposals,
+                    rejected=0, failed=0, loop_completed=False,
                     grounding_after_tools=False, tool_names=names_seen,
                 )
             proposals += 1
@@ -452,6 +459,9 @@ class EvaluationRunner:
             status="evaluated",
             proposals=proposals,
             proposals_valid=proposals_valid,
+            tool_call_count=proposals,
+            rejected=0,
+            failed=0,
             loop_completed=loop_completed,
             grounding_after_tools=grounding,
             tool_names=names_seen,
@@ -511,6 +521,9 @@ class EvaluationRunner:
                 sum(t.proposals_valid for t in tools_evaluated),
                 sum(t.proposals for t in tools_evaluated),
             ),
+            "toolCalls": sum(t.tool_call_count for t in tools_evaluated),
+            "rejected": sum(t.rejected for t in tools_evaluated),
+            "failed": sum(t.failed for t in tools_evaluated),
             "loopCompleted": sum(1 for t in tools_evaluated if t.loop_completed),
             "groundingAfterTools": sum(1 for t in tools_evaluated if t.grounding_after_tools),
             "toolsUsed": sorted(

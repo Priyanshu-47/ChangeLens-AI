@@ -21,6 +21,11 @@ RUN dotnet publish src/ChangeLens.Api/ChangeLens.Api.csproj -c Release -o /app/p
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
+# curl is needed by the compose healthcheck (DB-gated /api/v1/health).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root user (ASP.NET images ship an app user).
 USER app
 

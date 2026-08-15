@@ -11,6 +11,7 @@
 - [ ] **Project isolation:** a user of project A can never retrieve or view project B data, verified by tests. (P1, P3)
 - [x] **Controlled tool use (Phase 8):** seven read-only, project-isolated tools are allowlisted in .NET; the AI proposes calls and the backend validates, authorizes, executes (bounded timeout), and audits every call; unknown tools → `TOOL_NOT_ALLOWED`, invalid args → `INVALID_ARGUMENT`, cross-project → `NOT_FOUND`, max calls → `TOOL_CALL_LIMIT_EXCEEDED`; calls are visible in the trace (`toolCalls`) and audit log (`ToolExecuted`/`ToolRejected`). No shell/SQL/URL/write tools; Python never executes tools. (P8)
 - [x] **Evaluation is honest:** the Phase 7 runner produces real JSON/Markdown reports with per-leg Recall@K / Precision@K / MRR / Hit Rate over the versioned 20-case golden dataset, plus schema-validity, mechanical grounding, and evidence-coverage counts — using mock providers (zero Gemini). Hybrid is not claimed superior unless the measured numbers show it; metrics are labeled as synthetic-corpus/mock-embedding results. (P7)
+- [x] **Per-case tool trace (Phase 9):** every evaluation case records `toolCallsProposed / toolCallsExecuted / toolCallsRejected / toolCallsFailed`, `toolCallCount`, `toolLoopCompleted`, and `groundingAfterTools` in the JSON/Markdown reports (rejected/failed are structural zeros at the AI-service boundary — Python never executes tools; .NET integration tests cover authorization/rejection). (P9)
 - [x] **AI trace view:** any analysis shows model, prompt version, retrieval queries + retrieved documents, per-stage timings, and (Phase 8) tool calls with statuses/durations — via `GET /analyses/{id}/trace` and the React Trace panel + Retrieval Explorer + Tools-used list. Tokens/cost are recorded only when the provider exposes them. (P7, P8)
 
 ## 2. Quality & correctness
@@ -26,8 +27,8 @@
 
 - [ ] `dotnet test` and `pytest` are green; integration tests use a real PostgreSQL (Testcontainers) and a mocked AI service. (P1, P2)
 - [ ] Retrieval and schema-validation unit tests cover the hybrid pipeline and the repair loop. (P2, P3)
-- [ ] `docker compose up` (or the documented equivalent) runs frontend + backend + ai-service + postgres on a clean machine and reaches a seeded, working demo. (P9)
-- [ ] GitHub Actions CI: lint → unit → integration → security scan → AI evaluation (regression gate) → docker build, all green, with **zero Gemini spend in CI**. (P9)
+- [ ] `docker compose up --build` (or the documented equivalent) runs frontend + backend + ai-service + postgres on a clean machine and reaches a seeded, working demo. (P9 — compose file + Dockerfiles statically validated; final container run requires a Docker-equipped machine)
+- [ ] GitHub Actions CI: unit → integration → security scan → AI evaluation, all green, with **zero Gemini spend in CI**. (P9 — workflow implemented and YAML-valid; first remote run pending)
 - [ ] Swagger/OpenAPI for the backend is current; frontend client types are generated from it. (P1, P5)
 - [ ] Audit log records auth events, mutations, and tool calls; audit data is append-only. (P1, P6)
 

@@ -25,18 +25,18 @@ flowchart TB
     end
 ```
 
-## 2. Local Docker (the MVP deployment)
+## 2. Local Docker (the MVP deployment) — Phase 9 complete
 
-`docker compose up` runs four services (`frontend`, `backend`, `ai-service`, `postgres`):
+`docker compose up --build` runs the full four-service stack (`frontend`, `backend`, `ai-service`, `postgres`):
 
 | Service | Image strategy | Notes |
 | --- | --- | --- |
-| `postgres` | `pgvector/pgvector` (PostgreSQL 17+, pgvector bundled) | Named volume `pgdata`; healthcheck gates backend/AI startup; single instance hosts `app` + `ai` schemas |
-| `backend` | Multi-stage .NET 10 SDK→runtime | Non-root user; waits for postgres health; exposes `:5000` |
-| `ai-service` | Python slim + requirements (local embeddings as optional layer) | Same network; only reachable by backend |
-| `frontend` | Dev: Vite container (HMR); prod: nginx serving built assets | `VITE_API_BASE_URL` from env |
+| `postgres` | `pgvector/pgvector:pg18` (pgvector bundled) | Named volume `pgdata`; healthcheck gates dependents; single instance hosts `app` + `ai` schemas |
+| `backend` | Multi-stage .NET 10 SDK→runtime | Non-root user; waits for postgres health; DB-gated healthcheck (`/api/v1/health`); exposes `:5000` |
+| `ai-service` | Python slim + requirements | Internal network; port exposed on the host **for local dev only** (remove `ports:` before any shared deployment) |
+| `frontend` | Multi-stage React build → `nginx-unprivileged` (non-root, `:8080`) | Serves the SPA and proxies `/api/` to the backend — production is same-origin, no CORS |
 
-Compose files are introduced incrementally: Phase 1 adds `postgres` only; Phase 10 completes the four-service stack. Devs can run backend + AI service natively against the postgres container without compose (profiles).
+Secrets flow via `.env` (compose reads it); `docker compose up` requires `INTERNAL_API_KEY` and `JWT_SIGNING_KEY` to be set (see `.env.example`). Devs can also run backend / AI service natively against the postgres container (or `scripts/start-local-postgres.sh`).
 
 ## 3. Free-tier demo options (post-MVP, all evaluated against cold-start/persistence limits)
 
@@ -47,7 +47,7 @@ Compose files are introduced incrementally: Phase 1 adds `postgres` only; Phase 
 | **GitHub Codespaces / devcontainer** | Full local demo, zero hosting | The most honest demo: `docker compose up` in a codespace |
 | **Personal VPS (~$5/mo)** | All-in-one self-host | Lowest-cost always-on option; documented with a compose `prod` profile |
 
-**MVP decision:** the primary demo is local Docker (+ recorded screenshots + a seeded demo dataset). Free-tier hosting is a documented *option*, not a promise — portfolio honesty rule: never present ephemeral free hosting as production.
+**MVP decision:** the primary demo is local Docker (+ a seeded demo dataset + [docs/demo-script.md](demo-script.md)). Free-tier hosting is a documented *option*, not a promise — portfolio honesty rule: never present ephemeral free hosting as production. **Docker verification status:** the compose stack is statically validated in this environment; `docker compose up --build` must be run where Docker is available (see the Phase 9 exit criteria in development-sequence.md).
 
 ## 4. AWS path (Phase 11 — modular, cost-estimated, never provisioned early)
 

@@ -1,13 +1,17 @@
-# ChangeLens AI — local development stack.
+# ChangeLens AI — full local stack (Phase 9: frontend + backend + ai-service + postgres).
 #
-# Phase 2: postgres + backend + ai-service. Phase 9 adds the React frontend.
-#
-# Usage:  docker compose up -d
+# Usage:  docker compose up -d --build
 #         docker compose down     (keeps the pgdata volume)
 #         docker compose down -v  (also deletes data)
 #
+# Production topology: browser → nginx (frontend, :8080) → /api proxy → backend (:5000)
+# → internal FastAPI (:8000, reachable only by backend on the compose network). The
+# ai-service port is exposed on the host only for local development — remove the
+# `ports:` block before any shared deployment (docs/deployment-strategy.md).
+#
 # No Docker? Use scripts/start-local-postgres.sh for PostgreSQL and run the
-# backend / ai-service directly (see backend/README.md, ai-service/README.md).
+# backend / ai-service / frontend directly (see backend/README.md, ai-service/README.md,
+# frontend/README.md).
 #
 # Secrets come from the environment / .env (see .env.example). NEVER commit .env.
 
@@ -57,6 +61,8 @@ services:
       RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-10}
       RETRIEVAL_CANDIDATE_K: ${RETRIEVAL_CANDIDATE_K:-50}
       RRF_K: ${RRF_K:-60}
+    # DEV ONLY: exposes the AI service on the host. Remove for shared deployments —
+    # the backend is the only legitimate client (docs/deployment-strategy.md §2).
     ports:
       - "${AI_PORT:-8000}:8000"
     healthcheck:
@@ -87,13 +93,36 @@ services:
       # The backend talks to the AI service by Docker service name, never localhost.
       Ai__BaseUrl: http://ai-service:8000
       Ai__ApiKey: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set (see .env.example)}
+      # Phase 9: controlled CORS + in-memory analysis rate limiting (single instance).
+      Cors__AllowedOrigins: ${CORS__ALLOWEDORIGINS:-http://localhost:8080;http://localhost:5173}
+      RateLimit__AnalysisPermitLimit: ${RATE_LIMIT_ANALYSIS_PERMIT_LIMIT:-10}
+      RateLimit__AnalysisWindowSeconds: ${RATE_LIMIT_ANALYSIS_WINDOW_SECONDS:-60}
     ports:
       - "${API_PORT:-5000}:5000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).status==200 else 1)\""]
+      # DB-gated: /api/v1/health includes the PostgreSQL check, unlike /health.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5000/api/v1/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 25s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+    container_name: changelens-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
       retries: 3
 
 volumes:

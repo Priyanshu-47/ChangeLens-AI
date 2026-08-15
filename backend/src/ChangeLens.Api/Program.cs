@@ -7,6 +7,8 @@ using ChangeLens.Application;
 using ChangeLens.Application.Configuration;
 using ChangeLens.Application.Ports;
 using ChangeLens.Infrastructure;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using ChangeLens.Infrastructure.Jobs;
 using ChangeLens.Infrastructure.Options;
 using ChangeLens.Infrastructure.Persistence;
@@ -68,6 +70,43 @@ builder.Services.AddApplication();
 builder.Services.Configure<AnalysisOptions>(builder.Configuration.GetSection(AnalysisOptions.SectionName));
 builder.Services.AddHostedService<AnalysisWorker>();
 
+// Phase 9 hardening — controlled CORS (never AllowAnyOrigin; the production SPA is
+// same-origin through nginx, so CORS only matters for local dev against :5000).
+builder.Services.Configure<CorsOptions>(builder.Configuration.GetSection(CorsOptions.SectionName));
+var corsOptions = builder.Configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>() ?? new CorsOptions();
+var allowedOrigins = corsOptions.AllowedOrigins
+    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (allowedOrigins.Length > 0)
+{
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("spa", policy =>
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .WithExposedHeaders("X-Correlation-ID");
+        });
+    });
+}
+
+// Phase 9 hardening — in-memory rate limiting on analysis submission (single-instance;
+// protects free-tier AI spend from accidental abuse; health endpoints are exempt).
+builder.Services.Configure<RateLimitOptions>(builder.Configuration.GetSection(RateLimitOptions.SectionName));
+var rateOptions = builder.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new RateLimitOptions();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("analysis", limiter =>
+    {
+        limiter.PermitLimit = Math.Max(1, rateOptions.AnalysisPermitLimit);
+        limiter.Window = TimeSpan.FromSeconds(Math.Max(1, rateOptions.AnalysisWindowSeconds));
+        limiter.QueueLimit = Math.Max(0, rateOptions.AnalysisQueueLimit);
+        limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+        limiter.AutoReplenishment = true;
+    });
+});
+
 var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
 builder.Services.Configure<JwtOptions>(jwtSection);
 var jwt = jwtSection.Get<JwtOptions>() ?? new JwtOptions();
@@ -113,6 +152,15 @@ if (!app.Environment.IsDevelopment() &&
         "Ai:ApiKey must be a real shared secret for non-development environments. Set AI__APIKEY.");
 }
 
+// Production must fail safely if the database connection string is missing entirely
+// (a misconfigured deployment is worse than a failing one).
+if (!app.Environment.IsDevelopment() &&
+    string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:DefaultConnection must be configured for non-development environments.");
+}
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -120,6 +168,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v1/swagger.json", "ChangeLens API v1"));
 }
+
+if (allowedOrigins.Length > 0)
+{
+    app.UseCors("spa");
+}
+
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
