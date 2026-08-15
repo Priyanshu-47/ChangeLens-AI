@@ -13,6 +13,44 @@ public sealed class AnalysesController(
     IncidentInvestigationService investigations) : ControllerBase
 {
     /// <summary>
+    /// Phase 6: list analysis runs for a project (api-contract.md §2 — dashboard +
+    /// trace views). Optional filters: type, status, incidentId. Read permission;
+    /// non-members see 404.
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType<AnalysisStatusResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> List(
+        [FromQuery] Guid projectId,
+        [FromQuery] string? type = null,
+        [FromQuery] string? status = null,
+        [FromQuery] Guid? incidentId = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        if (projectId == Guid.Empty)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Validation failed",
+                Detail = "The 'projectId' query parameter is required.",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var result = await investigations.ListAsync(projectId, type, status, incidentId, page, pageSize, ct);
+        Response.Headers["X-Total-Count"] = result.Total.ToString();
+
+        return Ok(new { items = result.Items, page = result.Page, pageSize = result.PageSize, total = result.Total });
+    }
+
+    /// <summary>
     /// Phase 5: poll an analysis job (api-contract.md §5). Returns Queued/Running/
     /// Succeeded/Failed; the validated result is included only when Succeeded. Project
     /// authorization is enforced (non-members see 404, Viewers may poll).

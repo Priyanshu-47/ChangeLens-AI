@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChangeLens.Application.Common;
 using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Exceptions;
 using ChangeLens.Application.Ports;
@@ -100,6 +101,69 @@ public sealed class IncidentInvestigationService(
             ct);
 
         return AcceptedResponse(run.Id);
+    }
+
+    /// <summary>
+    /// Lists analysis runs for a project (api-contract.md §2 — dashboard + trace views).
+    /// Optional filters: type (ChangeRisk / IncidentInvestigation), status, incident.
+    /// Read permission; non-members see 404, viewers may list.
+    /// </summary>
+    public async Task<PagedResult<AnalysisStatusResponse>> ListAsync(
+        Guid projectId,
+        string? type,
+        string? status,
+        Guid? incidentId,
+        int page,
+        int pageSize,
+        CancellationToken ct)
+    {
+        await access.RequireAsync(
+            projectId, currentUser.UserId, currentUser.IsGlobalAdmin,
+            ProjectPermission.Read, ct);
+
+        var query = db.Set<AnalysisRun>().AsNoTracking().Where(r => r.ProjectId == projectId);
+
+        if (!string.IsNullOrWhiteSpace(type))
+        {
+            query = query.Where(r => r.Type == type);
+        }
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(r => r.Status == status);
+        }
+
+        if (incidentId is not null)
+        {
+            query = query.Where(r => r.IncidentId == incidentId);
+        }
+
+        var total = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(r => r.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(r => new AnalysisStatusResponse
+            {
+                Id = r.Id,
+                ProjectId = r.ProjectId,
+                Type = r.Type,
+                Status = r.Status,
+                IncidentId = r.IncidentId,
+                ResultSchemaVersion = r.ResultSchemaVersion,
+                Model = r.Model,
+                PromptVersion = r.PromptVersion,
+                QueuedAtUtc = r.QueuedAtUtc,
+                StartedAtUtc = r.StartedAtUtc,
+                CompletedAtUtc = r.CompletedAtUtc,
+                Error = r.FailureCode == null && r.Error == null
+                    ? null
+                    : new AnalysisErrorDto { Code = r.FailureCode, Message = r.Error }
+            })
+            .ToListAsync(ct);
+
+        return new PagedResult<AnalysisStatusResponse>(items, page, pageSize, total);
     }
 
     public async Task<AnalysisStatusResponse> GetStatusAsync(Guid analysisId, CancellationToken ct)

@@ -31,14 +31,17 @@ changelens-ai/
 │   │   ├── evaluation/       ← golden dataset runner + metrics
 │   │   └── core/             ← config (pydantic-settings), db, schemas, observability
 │   └── tests/                ← unit, retrieval, schema-validation, prompt regression, eval
-├── frontend/                 ← React + TypeScript SPA (Phase 5+)
+├── frontend/                 ← React + TypeScript SPA (Phase 6, implemented)
 │   ├── src/
-│   │   ├── pages/            ← dashboard, analysis, investigation, graph, evaluation, trace
-│   │   ├── components/       ← shared UI, evidence panel, charts, graph canvas
-│   │   ├── api/              ← typed API client + types generated from OpenAPI
-│   │   ├── hooks/            ← polling, auth, query state
-│   │   └── styles/           ← Tailwind theme
-│   └── tests/                ← Vitest + Testing Library
+│   │   ├── api/              ← typed API client + DTO mirrors (client, endpoints, types)
+│   │   ├── auth/             ← AuthContext + ProtectedRoute (JWT, session restore)
+│   │   ├── projects/         ← ProjectContext (list/selection; backend stays authoritative)
+│   │   ├── pages/            ← Login, Dashboard, Incidents, IncidentDetail, Analyses, Analysis, ChangeRisk
+│   │   ├── components/       ← Layout (sidebar/topbar), ui primitives, Timeline, Investigation
+│   │   ├── hooks/            ← useAsync, useAnalysisPolling
+│   │   ├── styles/           ← global.css design system (no UI framework dependency)
+│   │   └── test/             ← setup + fetch-mock helpers
+│   └── *.test.{ts,tsx}       ← Vitest + Testing Library (mocked HTTP, zero Gemini)
 ├── docker/                   ← compose files, Dockerfiles (Phase 1/9)
 ├── data/                     ← demo dataset + golden evaluation dataset (Phase 3/7)
 ├── .github/workflows/        ← CI/CD (Phase 10)
