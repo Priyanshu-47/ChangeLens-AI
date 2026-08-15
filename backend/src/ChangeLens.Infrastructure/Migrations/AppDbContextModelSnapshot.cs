@@ -43,6 +43,13 @@ namespace ChangeLens.Infrastructure.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid?>("IncidentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Model")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
@@ -53,6 +60,20 @@ namespace ChangeLens.Infrastructure.Migrations
                     b.Property<string>("PromptVersion")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("QueuedAtUtc")
+                        .HasColumnType("timestamptz");
+
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ResultSchemaVersion")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<string>("RetrievalConfig")
                         .HasColumnType("text");
@@ -77,7 +98,13 @@ namespace ChangeLens.Infrastructure.Migrations
 
                     b.HasIndex("ProjectId");
 
+                    b.HasIndex("RequestId")
+                        .IsUnique()
+                        .HasFilter("\"RequestId\" IS NOT NULL AND \"Status\" IN ('Queued', 'Running')");
+
                     b.HasIndex("ProjectId", "CreatedAtUtc");
+
+                    b.HasIndex("ProjectId", "IncidentId");
 
                     b.ToTable("analysis_runs", "app");
                 });

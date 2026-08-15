@@ -17,15 +17,20 @@ from pydantic import BaseModel
 
 from ..models.responses import (
     AnalysisUsage,  # noqa: F401 (re-exported for parity with provider surface)
+    CandidateStatus,
     EvidenceItem,
     EvidenceReference,
     EvidenceType,
     ImpactedComponent,
     ImpactType,
+    IncidentAnalysisResult,
+    IncidentEvidenceItem,
     RecommendedTest,
+    Remediation,
     RiskAnalysisResult,
     RiskFactor,
     RiskLevel,
+    RootCauseCandidate,
     TestCategory,
 )
 from .base import ProviderUsage, StructuredResult
@@ -61,7 +66,10 @@ class MockAIProvider:
         started = time.perf_counter()
         user_content = "\n".join(m["content"] for m in messages if m.get("role") == "user")
         evidence_ids = _EVIDENCE_ID_RE.findall(user_content)
-        result = self._build_result(evidence_ids)
+        if response_schema is IncidentAnalysisResult:
+            result = self._build_incident_result(evidence_ids)
+        else:
+            result = self._build_result(evidence_ids)
         latency_ms = self._fixed_latency_ms or max(1, int((time.perf_counter() - started) * 1000))
         return StructuredResult(
             content=result.model_dump_json(indent=2),
@@ -70,6 +78,67 @@ class MockAIProvider:
             latency_ms=latency_ms,
             model=self._model,
             finish_reason="STOP",
+        )
+
+    def _build_incident_result(self, evidence_ids: list[str]) -> IncidentAnalysisResult:
+        """Deterministic, grounded-by-construction incident investigation (brief §39)."""
+        chunk_ids = [eid for eid in evidence_ids if eid.startswith("chunk:")]
+        evidence: list[IncidentEvidenceItem] = []
+        candidates: list[RootCauseCandidate] = []
+
+        for eid in chunk_ids[:3]:
+            evidence.append(
+                IncidentEvidenceItem(
+                    id=eid,
+                    type=EvidenceType.Document,
+                    source=eid,
+                    summary="Retrieved evidence relevant to this incident (hybrid retrieval).",
+                )
+            )
+
+        if chunk_ids:
+            candidates.append(
+                RootCauseCandidate(
+                    candidate_id="cand-1",
+                    title="Change-related hypothesis from retrieved evidence",
+                    description=(
+                        "The retrieved runbook/incident/source evidence suggests a change-related "
+                        "cause; confirm against production telemetry before acting."
+                    ),
+                    confidence=0.6,
+                    status=CandidateStatus.CANDIDATE,
+                    evidence_ids=[chunk_ids[0]],
+                    reasoning=f"Grounded in retrieved evidence {chunk_ids[0]}.",
+                    unknowns=[
+                        "No deployment timestamp was supplied.",
+                        "No application log sample was supplied.",
+                    ],
+                )
+            )
+
+        return IncidentAnalysisResult(
+            root_cause_candidates=candidates,
+            remediation=Remediation(
+                immediate_mitigation=(
+                    "Confirm the most recent deployment window and check the affected service's health."
+                    if chunk_ids
+                    else None
+                ),
+                investigation_steps=[
+                    "Correlate the first error timestamp with the deployment window.",
+                    "Review recent configuration changes to the affected service.",
+                ],
+                recommended_remediation=None,
+                validation_steps=[],
+                rollback_consideration=(
+                    "If a change correlates with symptom onset, evaluate rolling it back."
+                    if chunk_ids
+                    else None
+                ),
+                insufficient_evidence=not bool(chunk_ids),
+            ),
+            unknowns=[],
+            evidence=evidence,
         )
 
     def _build_result(self, evidence_ids: list[str]) -> RiskAnalysisResult:

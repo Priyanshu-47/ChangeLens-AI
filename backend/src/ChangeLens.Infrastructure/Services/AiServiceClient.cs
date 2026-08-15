@@ -74,6 +74,50 @@ public sealed class AiServiceClient(
         }
     }
 
+    public async Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
+        IncidentAnalysisRequestDto request, CancellationToken ct)
+    {
+        var correlationId = ResolveCorrelationId();
+
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, "internal/v1/analysis/incident")
+        {
+            Content = JsonContent.Create(request, options: Json)
+        };
+        httpRequest.Headers.Add("X-Internal-Key", options.Value.ApiKey);
+        httpRequest.Headers.Add("X-Contract-Version", AiOptions.ContractVersion);
+        httpRequest.Headers.Add("X-Correlation-ID", correlationId);
+
+        logger.LogInformation(
+            "Incident analysis request started for project {ProjectId} (correlation {CorrelationId})",
+            request.ProjectId, correlationId);
+
+        try
+        {
+            using var response = await httpClient.SendAsync(httpRequest, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return JsonSerializer.Deserialize<IncidentAnalysisResponseDto>(body, Json)
+                    ?? throw new AiUnavailableException("AI service returned an empty response body.");
+            }
+
+            throw MapError(response, body);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Incident analysis request timed out after {Timeout}s (correlation {CorrelationId})",
+                options.Value.TimeoutSeconds, correlationId);
+            throw new AiTimeoutException(
+                $"AI service did not respond within {options.Value.TimeoutSeconds}s.");
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "AI service unreachable (correlation {CorrelationId})", correlationId);
+            throw new AiUnavailableException("AI service is unreachable.");
+        }
+    }
+
     private string ResolveCorrelationId()
     {
         var incoming = httpContextAccessor.HttpContext?.Request.Headers["X-Correlation-ID"].ToString();

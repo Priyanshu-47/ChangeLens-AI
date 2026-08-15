@@ -41,7 +41,7 @@ changelens-ai/
 │   └── tests/                ← Vitest + Testing Library
 ├── docker/                   ← compose files, Dockerfiles (Phase 1/9)
 ├── data/                     ← demo dataset + golden evaluation dataset (Phase 3/7)
-├── .github/workflows/        ← CI/CD (Phase 9)
+├── .github/workflows/        ← CI/CD (Phase 10)
 └── scripts/                  ← dev helpers (seed, re-index, eval-run)
 ```
 

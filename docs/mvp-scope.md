@@ -35,11 +35,11 @@ A locally-runnable product that demonstrates, end to end, **both core workflows 
 - **Real SCM integration** (GitHub App webhooks, git diff fetching). Changes are submitted via the API and/or seeded demo data. Roslyn parses the actual changed files regardless of how they arrive.
 - **Multiple LLM providers live.** The abstraction exists (ADR-0005); only Gemini is implemented in MVP.
 - **Multi-tenancy / organizations.** Projects provide data isolation; the concept is project-scoped authorization, not a SaaS tenancy model.
-- **SSO / external identity providers.** Local Identity accounts + JWT only; Cognito/Entra is a Phase 10 note.
+- **SSO / external identity providers.** Local Identity accounts + JWT only; Cognito/Entra is a Phase 11 note.
 - **Async message queue.** No Redis/Kafka/SQS in MVP (ADR-0003, §8 of architecture).
 - **Real-time / websockets.** Polling-based job status is sufficient.
 - **Advanced observability stack** (OpenTelemetry exporters, tracing backends). MVP records AI-run metadata in the DB and exposes a trace view; structured logs to stdout.
-- **Infrastructure as code for AWS.** Terraform/modules are Phase 10.
+- **Infrastructure as code for AWS.** Terraform/modules are Phase 11.
 - **OCR / image inputs.** Not in the document types for MVP.
 
 ## Scope guardrails (hard rules)

@@ -42,6 +42,8 @@ Extra structural rules enforced post-validation (deterministic, no LLM):
 - `confidence` clamped to [0,1]; `riskLevel` ∈ enum; arrays bounded (e.g. ≤ 25 risk factors).
 - **Grounding rule:** every `riskFactor` / `rootCauseCandidate` must reference ≥1 evidence id that exists in the *input evidence package*. Zero-evidence conclusions fail validation. This is the enforcement half of "evidence grounding" ([ADR-0007](adr/0007-structured-output-schema-validation.md), [security-model.md](security-model.md)).
 
+> **Known limitation (Aug 2026):** the live `gemini-3.1-flash-lite` structured-output call returns `HTTP 400 INVALID_ARGUMENT` for the current `responseSchema` shapes. The `api_safe_schema()` normalizer in `app/providers/gemini.py` fixed `$ref`/`$defs`/`enum` for the previous flash model (proven by bisection: 400 → 429 quota), but flash-lite still rejects the schema shape — a model-specific compatibility gap. **Pydantic remains the final validation authority and is not bypassed**; the normal suite runs on `MockAIProvider` and makes zero Gemini calls. Resolution (one approved diagnostic call to identify the rejected construct, or a schema simplification) is tracked outside Phase 5 — live Gemini text analysis is not claimed to work until it is resolved.
+
 ## 4. Prompt architecture (injection defense + versioning)
 
 Prompt layering, strictest first:
@@ -70,7 +72,7 @@ Prompts are **versioned files** (`app/llm/prompts/risk_v3.txt`, `investigation_v
 - **Unknowns honesty:** the schema has `unknowns: []`; the prompt instructs the model to state unknowns explicitly rather than fabricate; validation does not *require* unknowns (they are genuinely sometimes empty).
 - **Content safety:** Gemini safety settings set to block high-risk categories (configurable via env); responses containing blocked content are treated as a failed generation (safe failure path).
 - **Token budget per call:** retrieved evidence is trimmed (by score, capped at ~N tokens, configurable) before the prompt is built — the context never silently overflows; overflow is a truncation decision with metadata, not a surprise.
-- **Cost floor:** analysis endpoints are the only LLM consumers in workflow paths; retrieval is embedding-only (cheap); summaries on the dashboard are deferred until Phase 8 to keep free-tier spend bounded.
+- **Cost floor:** analysis endpoints are the only LLM consumers in workflow paths; retrieval is embedding-only (cheap); summaries on the dashboard are deferred until Phase 9 to keep free-tier spend bounded.
 
 ## 6. Change-model context & context budget (Phase 4)
 

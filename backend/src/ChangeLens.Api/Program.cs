@@ -4,8 +4,10 @@ using System.Text.Json.Serialization;
 using ChangeLens.Api.Http;
 using ChangeLens.Api.Middleware;
 using ChangeLens.Application;
+using ChangeLens.Application.Configuration;
 using ChangeLens.Application.Ports;
 using ChangeLens.Infrastructure;
+using ChangeLens.Infrastructure.Jobs;
 using ChangeLens.Infrastructure.Options;
 using ChangeLens.Infrastructure.Persistence;
 using ChangeLens.Infrastructure.Seeding;
@@ -61,6 +63,10 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddApplication();
+
+// Phase 5 async analysis worker (ADR-0009): bounded, cancellable, observable.
+builder.Services.Configure<AnalysisOptions>(builder.Configuration.GetSection(AnalysisOptions.SectionName));
+builder.Services.AddHostedService<AnalysisWorker>();
 
 var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
 builder.Services.Configure<JwtOptions>(jwtSection);

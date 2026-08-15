@@ -175,6 +175,10 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
                 Usage = new AnalysisUsageDto { Model = "mock", ValidationStatus = "valid" }
             });
         }
+
+        public Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
+            IncidentAnalysisRequestDto request, CancellationToken ct)
+            => throw new NotSupportedException("Not used in change-risk tests.");
     }
 
     private sealed class FakeChangeEngine : IChangeAnalysisEngine

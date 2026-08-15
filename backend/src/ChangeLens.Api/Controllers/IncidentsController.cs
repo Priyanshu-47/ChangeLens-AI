@@ -9,7 +9,9 @@ namespace ChangeLens.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/incidents")]
-public sealed class IncidentsController(IncidentService incidents) : ControllerBase
+public sealed class IncidentsController(
+    IncidentService incidents,
+    IncidentInvestigationService investigations) : ControllerBase
 {
     [HttpPost]
     [ProducesResponseType<IncidentResponse>(StatusCodes.Status201Created)]
@@ -66,6 +68,26 @@ public sealed class IncidentsController(IncidentService incidents) : ControllerB
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Update(Guid incidentId, [FromBody] UpdateIncidentRequest request, CancellationToken ct)
         => Ok(await incidents.UpdateAsync(incidentId, request, ct));
+
+    /// <summary>
+    /// Phase 5: submit an asynchronous incident investigation (api-contract.md §5).
+    /// Returns 202 Accepted with the analysis id; poll GET /api/v1/analyses/{id}.
+    /// A client RequestId is idempotent while the run is outstanding.
+    /// </summary>
+    [HttpPost("{incidentId:guid}/investigate")]
+    [ProducesResponseType<InvestigationAcceptedResponse>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Investigate(
+        Guid incidentId,
+        [FromBody] InvestigateIncidentRequest? request,
+        CancellationToken ct)
+    {
+        var accepted = await investigations.SubmitAsync(
+            incidentId, request ?? new InvestigateIncidentRequest(), ct);
+        return Accepted($"/api/v1/analyses/{accepted.AnalysisId}", accepted);
+    }
 
     [HttpPost("{incidentId:guid}/events")]
     [ProducesResponseType<IncidentEventResponse>(StatusCodes.Status201Created)]

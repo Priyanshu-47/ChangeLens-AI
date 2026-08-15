@@ -21,4 +21,8 @@ public static class AuditActions
     public const string IncidentEventAdded = "IncidentEventAdded";
 
     public const string AnalysisRequested = "AnalysisRequested";
+    public const string AnalysisStarted = "AnalysisStarted";
+    public const string AnalysisCompleted = "AnalysisCompleted";
+    public const string AnalysisFailed = "AnalysisFailed";
 }
+

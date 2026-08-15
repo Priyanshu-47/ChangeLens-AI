@@ -1,6 +1,6 @@
 # API Contract (Public Boundary)
 
-> Phase 0 deliverable (updated Phase 1). Conventions, endpoint catalog, and key DTO shapes for the REST API the React SPA consumes. The AI service's internal contract lives in [ai-service-boundary.md](ai-service-boundary.md). Endpoints marked **Phase 1** are implemented; the rest are planned. The authoritative DTOs are generated from the ASP.NET Core OpenAPI document (`/swagger/v1/swagger.json`) — this document defines the contract they must satisfy.
+> Phase 0 deliverable (updated Phase 5). Conventions, endpoint catalog, and key DTO shapes for the REST API the React SPA consumes. The AI service's internal contract lives in [ai-service-boundary.md](ai-service-boundary.md). Endpoints marked **Phase 1** are implemented; the rest are planned. The authoritative DTOs are generated from the ASP.NET Core OpenAPI document (`/swagger/v1/swagger.json`) — this document defines the contract they must satisfy.
 
 ## 1. Conventions
 
@@ -50,10 +50,11 @@
 | POST/GET | `/api/v1/incidents` | Create (with optional initial events) / list — **Phase 1** |
 | GET/PATCH | `/api/v1/incidents/{incidentId}` | Detail incl. timeline events / update — **Phase 1** |
 | POST | `/api/v1/incidents/{incidentId}/events` | Append a timeline event (log/error/deployment) — **Phase 1** |
-| POST | `/api/v1/incidents/{incidentId}/investigate` | 202 → runs Workflow B |
-| GET | `/api/v1/incidents/{incidentId}/investigation` | Latest investigation result |
+| POST | `/api/v1/incidents/{incidentId}/investigate` | 202 → runs Workflow B async — **Phase 5** |
+| GET | `/api/v1/analyses/{analysisRunId}` | Job status; validated result when complete — **Phase 5** (async polling) |
+| GET | `/api/v1/incidents/{incidentId}/investigation` | Latest investigation result (Phase 6) |
 
-### Evaluation (Phase 7)
+### Evaluation (Phase 8)
 | Method | Path | Notes |
 | --- | --- | --- |
 | POST | `/api/v1/evaluations/run` | 202 — runs golden dataset eval (config: strategies to compare) |
@@ -100,50 +101,62 @@
 }
 ```
 
-### Incident investigation (Workflow B result)
+### Incident investigation (Workflow B result — Phase 5)
 
 ```json
 {
-  "severity": "SEV2",
-  "classification": "DeploymentRegression",
   "rootCauseCandidates": [
     {
-      "id": "…",
-      "title": "Cached token signing key mismatch",
+      "id": "cand-1",
+      "title": "Signing-key rotation invalidated issued tokens",
       "confidence": 0.74,
       "status": "Candidate",
-      "evidence": [
-        { "type": "Deployment", "reference": "auth-api v2.4.1 deployed 04:02 UTC" },
-        { "type": "Log", "reference": "event e-77: 'invalid signature' at 04:05 UTC" },
-        { "type": "Document", "reference": "runbook RB-014 §KeyRotation" }
-      ],
+      "evidenceIds": [ "chunk:…" ],
+      "reasoning": "The timeline places the deployment before the first 401.",
       "unknowns": [ "Whether the signer pod recycled before/after deploy" ]
     }
   ],
-  "evidence": [ { "id": "…", "type": "Log", "reference": "event e-77", "summary": "…" } ],
-  "recommendedInvestigationSteps": [ "Compare JWT kid against deployed config", "Check signer pod rollout time" ],
-  "recommendedRemediation": "Roll back auth-api to v2.4.0 and rotate the cache",
-  "unknowns": [ "Full request volume at failure window" ]
+  "remediation": {
+    "immediateMitigation": "Validate the new key against the token issuer.",
+    "investigationSteps": [ "Correlate the first 401 with the rotation window." ],
+    "recommendedRemediation": null,
+    "validationSteps": [],
+    "rollbackConsideration": "Evaluate rolling the rotation back.",
+    "insufficientEvidence": false
+  },
+  "unknowns": [ "No database telemetry was available." ],
+  "evidence": [ { "id": "chunk:…", "type": "Document", "source": "chunk:…", "summary": "…", "metadata": {} } ]
 }
 ```
 
-### Analysis run (job resource)
+Every `rootCauseCandidates[].evidenceIds` entry MUST be an evidence id that exists in the
+prompt's evidence index (enforced deterministically by the AI service grounding rule,
+[ADR-0007](adr/0007-structured-output-schema-validation.md)); an empty list is rejected by schema validation.
+
+### Analysis run (job resource — Phase 5)
 
 ```json
 {
   "id": "…",
   "projectId": "…",
-  "type": "ChangeRisk",
-  "status": "RUNNING",
-  "progress": { "step": "retrieval", "detail": "semantic search" },
-  "result": { "kind": "RiskReport", "id": "…" },
-  "model": "gemini-3.1-flash-lite",
-  "promptVersion": "risk-v3",
-  "startedAt": "…",
-  "completedAt": null,
+  "type": "IncidentInvestigation",
+  "status": "Queued",
+  "incidentId": "…",
+  "result": { "rootCauseCandidates": [], "remediation": {}, "unknowns": [], "evidence": [] },
+  "resultSchemaVersion": "incident-v1",
+  "model": "mock-gemini-3.1-flash-lite",
+  "promptVersion": "incident-v1",
+  "queuedAtUtc": "…",
+  "startedAtUtc": null,
+  "completedAtUtc": null,
   "error": null
 }
 ```
+
+`status` is `Queued | Running | Succeeded | Failed`. The validated `result` is present only
+when `Succeeded`; `error` is `{ "code": "LLM_RATE_LIMITED", "message": "…" }` when `Failed`
+(never raw stack traces or secrets). `type` is `ChangeRisk` (synchronous Phase 2/4 slice)
+or `IncidentInvestigation` (async Phase 5).
 
 ## 4. Authorization matrix (summary)
 
@@ -158,7 +171,9 @@ Project membership is required for every project-scoped call ([ADR-0012](adr/001
 
 ## 5. Async job semantics
 
-1. `POST` returns `202` + `Location: /api/v1/analyses/{id}` (or `/evaluations/{id}`).
-2. Job states: `Queued → Running → Succeeded | Failed`. Failed jobs carry a machine-readable `error.code` (e.g. `AI_VALIDATION_FAILED`, `LLM_RATE_LIMITED`, `RETRIEVAL_UNAVAILABLE`) and the AI-service error details are retained for the trace view.
-3. Idempotency: `POST` bodies include a client-generated `requestId`; re-submission with the same `requestId` returns the existing job (no duplicate LLM spend).
-4. Frontend polls with backoff (1s, 2s, 4s… cap 10s); no websockets in MVP.
+1. `POST /api/v1/incidents/{incidentId}/investigate` returns `202 Accepted` with body `{ "analysisId", "status": "Queued", "statusUrl": "/api/v1/analyses/{analysisId}" }` and a `Location` header.
+2. Job states: `Queued → Running → Succeeded | Failed`, enforced by a state machine (`AnalysisRun.TransitionTo`) — a job can never move backwards or be re-completed.
+3. Failure codes (machine-readable `error.code`): `AI_VALIDATION_FAILED`, `LLM_RATE_LIMITED`, `AI_TIMEOUT`, `AI_UNAVAILABLE`, `JOB_TIMEOUT`, `QUEUE_FULL`, `WORKER_INTERRUPTED`, `INTERNAL`.
+4. Idempotency: the body accepts a client-generated `requestId`; while a run with the same `projectId + requestId` is Queued/Running the submission returns the existing job (no duplicate AI spend). After a terminal state the same key starts a fresh run. The unique index only covers non-terminal statuses.
+5. The queue is bounded and in-process (no Redis/Kafka); a full queue persists the run as `Failed(QUEUE_FULL)` rather than dropping it. Concurrency is capped (`Analysis:MaxConcurrency`, default 2). Transient AI failures (429/504/502) are retried with bounded backoff; 422 validation failures are never retried.
+6. Frontend polls with backoff (1s, 2s, 4s… cap 10s); no websockets in MVP. A job can never stay `Running` forever — the per-job timeout fails it as `JOB_TIMEOUT`; interrupted jobs are recovered as `WORKER_INTERRUPTED` on startup.

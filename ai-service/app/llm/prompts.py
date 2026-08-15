@@ -20,17 +20,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import Settings
-from ..models.requests import RiskAnalysisRequest
-from ..models.responses import RiskAnalysisResult
+from ..models.requests import IncidentAnalysisRequest, RiskAnalysisRequest
+from ..models.responses import IncidentAnalysisResult, RiskAnalysisResult
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Version -> file name. Only known versions can be requested (the backend may pin).
 PROMPT_FILES: dict[str, str] = {
     "risk-v1": "risk_v1.txt",
+    "incident-v1": "incident_v1.txt",
 }
 
 DEFAULT_PROMPT_VERSION = "risk-v1"
+DEFAULT_INCIDENT_PROMPT_VERSION = "incident-v1"
 
 # Obvious instruction-like line prefixes stripped from evidence (defense in depth).
 _INSTRUCTION_PATTERNS = (
@@ -95,6 +97,139 @@ class PromptBundle:
     version: str
     evidence_truncated: bool = False
     extra_user_turns: list[str] = field(default_factory=list)
+
+
+def build_incident_evidence_index(request: "IncidentAnalysisRequest") -> list[str]:
+    """Evidence ids an incident investigation may reference (grounding vocabulary).
+
+    Incident evidence is the retrieved package only: chunks carry stable ids
+    (`chunk:<uuid>`). The incident record itself is context, not evidence — the model
+    may not reference it, which keeps every claim tied to retrievable artifacts.
+    """
+    return [d.id for d in request.retrieved_documents]
+
+
+def build_incident_prompt(
+    request: "IncidentAnalysisRequest",
+    schema_json: str | None = None,
+    *,
+    prompt_version: str | None = None,
+    max_evidence_chars: int = 120_000,
+    max_chars_per_chunk: int | None = None,
+) -> PromptBundle:
+    """Render the layered incident-investigation prompt (brief §22)."""
+    version = prompt_version or DEFAULT_INCIDENT_PROMPT_VERSION
+    if version not in PROMPT_FILES:
+        version = DEFAULT_INCIDENT_PROMPT_VERSION
+
+    system_template = (_PROMPTS_DIR / PROMPT_FILES[version]).read_text(encoding="utf-8")
+    schema_json = schema_json or json.dumps(
+        IncidentAnalysisResult.model_json_schema(), indent=2
+    )
+    system = system_template.replace("{schema}", schema_json)
+
+    user = _render_incident_user_section(
+        request,
+        max_evidence_chars=max_evidence_chars,
+        max_chars_per_chunk=max_chars_per_chunk,
+    )
+    return PromptBundle(
+        system=system,
+        messages=[{"role": "user", "content": user.text}],
+        version=version,
+        evidence_truncated=user.evidence_truncated,
+    )
+
+
+def _render_incident_user_section(
+    request: "IncidentAnalysisRequest",
+    *,
+    max_evidence_chars: int,
+    max_chars_per_chunk: int | None = None,
+) -> UserSection:
+    parts: list[str] = [_DATA_HEADER, ""]
+    truncated = False
+
+    inc = request.incident
+    parts.append("<incident>")
+    parts.append(f"title: {sanitize_evidence(inc.title)}")
+    if inc.summary:
+        parts.append(f"summary: {sanitize_evidence(inc.summary)}")
+    parts.append(f"severity: {inc.severity}")
+    parts.append(f"status: {inc.status}")
+    if inc.environment:
+        parts.append(f"environment: {sanitize_evidence(inc.environment)}")
+    if inc.service:
+        parts.append(f"service: {sanitize_evidence(inc.service)}")
+    if inc.started_at_utc:
+        parts.append(f"started_at_utc: {inc.started_at_utc.isoformat()}")
+    if inc.detected_at_utc:
+        parts.append(f"detected_at_utc: {inc.detected_at_utc.isoformat()}")
+    parts.append("</incident>")
+    parts.append("")
+
+    if inc.symptoms:
+        parts.append("<symptoms>")
+        for s in inc.symptoms:
+            parts.append(sanitize_evidence(s)[:2000])
+        parts.append("</symptoms>")
+        parts.append("")
+
+    if inc.known_facts:
+        parts.append("<known_facts>")
+        for f in inc.known_facts:
+            parts.append(sanitize_evidence(f))
+        parts.append("</known_facts>")
+        parts.append("")
+
+    if inc.timeline:
+        parts.append("<timeline>")
+        for e in inc.timeline:
+            stamp = e.occurred_at_utc.isoformat() if e.occurred_at_utc else "?"
+            parts.append(
+                f"[{stamp}] {sanitize_evidence(e.type)}: {sanitize_evidence(e.message or '')}"
+            )
+            if e.source:
+                parts.append(f"  source: {sanitize_evidence(e.source)}")
+        parts.append("</timeline>")
+        parts.append("")
+
+    if inc.unknowns:
+        parts.append("<context_unknowns>")
+        for u in inc.unknowns:
+            parts.append(sanitize_evidence(u))
+        parts.append("</context_unknowns>")
+        parts.append("")
+
+    # Evidence package: retrieved documents only (untrusted; sanitized + budget-capped).
+    budget = max_evidence_chars
+    parts.append("<evidence_package>")
+    for d in sorted(request.retrieved_documents, key=lambda x: -(x.score or 0.0)):
+        safe = sanitize_evidence(d.content)
+        if max_chars_per_chunk is not None and len(safe) > max_chars_per_chunk:
+            safe = safe[:max_chars_per_chunk]
+            truncated = True
+        if len(safe) > budget:
+            safe = safe[:budget]
+            truncated = True
+        if not safe.strip():
+            continue
+        parts.append(f'<evidence id="{d.id}" type="{d.document_type}">')
+        parts.append(safe)
+        parts.append("</evidence>")
+        budget -= len(safe)
+        if budget <= 0:
+            truncated = True
+            break
+    parts.append("</evidence_package>")
+    parts.append("")
+
+    parts.append("<evidence_index>")
+    for eid in build_incident_evidence_index(request):
+        parts.append(f"- {eid}")
+    parts.append("</evidence_index>")
+
+    return UserSection(text="\n".join(parts), evidence_truncated=truncated)
 
 
 def build_risk_prompt(

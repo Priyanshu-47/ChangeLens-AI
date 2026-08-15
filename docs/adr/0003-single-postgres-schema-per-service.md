@@ -19,5 +19,5 @@ Ownership is strict: the backend never writes to `ai`; the AI service never writ
 
 - $0, one container, one backup, one healthcheck; relational and vector data co-located (transactional consistency where needed, e.g. document + chunks).
 - pgvector HNSW supports the hybrid retrieval design (ADR-0004).
-- Cost: schemas share a server (no independent scaling — irrelevant at portfolio scale); migration discipline is mandatory; a future scale-out is documented in Phase 10 notes (managed Postgres with pgvector, or a dedicated vector store behind the same abstraction).
+- Cost: schemas share a server (no independent scaling — irrelevant at portfolio scale); migration discipline is mandatory; a future scale-out is documented in Phase 11 notes (managed Postgres with pgvector, or a dedicated vector store behind the same abstraction).
 - No Redis/Kafka/etc. — no demonstrated requirement (also ADR-0009 keeps async within the app via job rows).

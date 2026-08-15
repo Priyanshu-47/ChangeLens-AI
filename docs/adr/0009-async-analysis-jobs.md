@@ -17,4 +17,4 @@ Job state and AI-run metadata live in the `app` schema (`analysis_runs`, `evalua
 
 - Production-shaped UX and failure handling; jobs are observable and retryable.
 - The job runner is a natural place for per-analysis instrumentation (tokens, latency, cost) feeding the trace and evaluation views.
-- Cost: polling API surface + job state machine; the in-DB queue has a throughput ceiling — irrelevant for MVP, documented as a Phase 10 note (SQS if ever needed).
+- Cost: polling API surface + job state machine; the in-DB queue has a throughput ceiling — irrelevant for MVP, documented as a Phase 11 note (SQS if ever needed).
