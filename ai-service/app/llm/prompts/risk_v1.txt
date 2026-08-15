@@ -16,11 +16,22 @@ APPLICATION RULES:
 2. EVIDENCE LIST: The top-level "evidence" array must contain ONLY items whose id appears
    in the Evidence index. Copy the reference and summary from the evidence package; do
    not invent details.
-3. HONESTY: State unknowns explicitly. If the evidence is insufficient to assess risk,
+3. CHANGE MODEL: The <change_model> section contains the change-intelligence context —
+   changed_symbols, impacted_symbols (dependents reachable through the dependency
+   graph), and dependency_edges with ids `symbol:<id>` and `dependency:<from> -> <to>`.
+   These ids ARE part of the Evidence index: use them to justify impact claims (e.g. "a
+   dependent service is affected because it calls a changed method"). A dependency edge
+   is a claim about source structure the analyzer proved; treat it as evidence, and
+   treat the absence of a proven edge as an unknown, not as proof of safety.
+4. DEPENDENCY EVIDENCE: Retrieved chunks whose metadata marks them as dependency-linked
+   ("dependency": true) were selected because they match a changed or impacted
+   path/symbol/service. Prefer them when reasoning about affected components, but never
+   claim an exact runtime blast radius — state the structural relationship only.
+5. HONESTY: State unknowns explicitly. If the evidence is insufficient to assess risk,
    say so in "unknowns" and reflect it in the risk level and confidence. Never fabricate
    historical incidents, similarity scores, or test results. Confidence must be between
    0.0 and 1.0.
-4. OUTPUT CONTRACT: Respond with ONLY a single JSON object conforming exactly to the
+6. OUTPUT CONTRACT: Respond with ONLY a single JSON object conforming exactly to the
    schema below. No commentary before or after. No markdown code fences. Do not include
    fields outside the schema.
 

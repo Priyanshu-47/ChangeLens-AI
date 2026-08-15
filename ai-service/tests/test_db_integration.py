@@ -262,3 +262,104 @@ def test_document_type_filter(services):
     )
     assert response.results
     assert all(r.document_type == "Incident" for r in response.results)
+
+
+# --- Phase 4: dependency-linked retrieval leg ---
+
+
+def _dependency_docs(project: str):
+    return [
+        _doc(
+            project, "tok",
+            "public class TokenService { public string Issue(string svc) => \"jwt\"; }",
+            file_path="src/AcmePay.Application/Auth/TokenService.cs",
+            service_id="acmepay-api",
+        ),
+        _doc(
+            project, "pay",
+            "public class ProcessPaymentHandler { public void Handle() { } }",
+            file_path="src/AcmePay.Application/Payments/ProcessPaymentHandler.cs",
+            service_id="acmepay-api",
+        ),
+    ]
+
+
+def test_dependency_leg_finds_chunks_by_path(services):
+    _, _, ingestion, retrieval, project = services
+    _ingest(ingestion, project, _dependency_docs(project))
+
+    response = retrieval.search(
+        RetrievalSearchRequest(
+            project_id=project,
+            query="irrelevant text that matches nothing",
+            strategy="hybrid",
+            k=5,
+            dependency={"paths": ["src/AcmePay.Application/Auth/TokenService.cs"]},
+        )
+    )
+
+    ids = {r.document_id for r in response.results}
+    assert f"{project}:tok" in ids
+    tok = next(r for r in response.results if r.document_id == f"{project}:tok")
+    assert tok.sources is not None and tok.sources.dependency is not None
+
+
+def test_dependency_leg_finds_chunks_by_symbol_and_service(services):
+    _, _, ingestion, retrieval, project = services
+    _ingest(ingestion, project, _dependency_docs(project))
+
+    response = retrieval.search(
+        RetrievalSearchRequest(
+            project_id=project,
+            query="irrelevant",
+            strategy="hybrid",
+            k=5,
+            dependency={"symbols": ["ProcessPaymentHandler"], "services": ["acmepay-api"]},
+        )
+    )
+
+    ids = {r.document_id for r in response.results}
+    assert f"{project}:pay" in ids
+
+
+def test_combined_retrieval_ranks_dependency_evidence_above_irrelevant_text(services):
+    """A dependency-linked chunk outranks a textually-similar but unrelated chunk (RRF)."""
+    _, _, ingestion, retrieval, project = services
+    _ingest(
+        ingestion,
+        project,
+        [
+            _doc(project, "tok", "public class TokenService { JWT signing key rotation }",
+                 file_path="src/AcmePay.Application/Auth/TokenService.cs"),
+            _doc(project, "unrel", "JWT signing key rotation and validation details"),
+        ],
+    )
+
+    response = retrieval.search(
+        RetrievalSearchRequest(
+            project_id=project,
+            query="JWT signing key rotation",
+            strategy="hybrid",
+            k=5,
+            dependency={"paths": ["src/AcmePay.Application/Auth/TokenService.cs"]},
+        )
+    )
+
+    assert response.results
+    assert response.results[0].document_id == f"{project}:tok"
+
+
+def test_dependency_leg_enforces_project_isolation(services):
+    _, _, ingestion, retrieval, project = services
+    _ingest(ingestion, project, _dependency_docs(project))
+
+    response = retrieval.search(
+        RetrievalSearchRequest(
+            project_id="another-project",
+            query="irrelevant",
+            strategy="hybrid",
+            k=10,
+            dependency={"paths": ["src/AcmePay.Application/Auth/TokenService.cs"]},
+        )
+    )
+    assert response.results == []

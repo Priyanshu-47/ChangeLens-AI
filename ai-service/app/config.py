@@ -51,8 +51,13 @@ class Settings(BaseSettings):
     ai_readiness_probe: bool = False
     # Hard cap on evidence content rendered into a prompt (token-budget guard).
     ai_max_evidence_chars: int = 120_000
-    # Automatically run hybrid retrieval to fill the evidence package when the request
-    # does not already contain retrieved documents (Phase 3 wiring of RAG into analysis).
+    # Phase 4 context budget (brief §24): maximum number of retrieved chunks and the
+    # per-chunk character cap. Both are server-side clamps; a request may only lower them.
+    ai_max_evidence_chunks: int = 20
+    ai_max_chars_per_chunk: int = 12_000
+    # Automatically run hybrid retrieval (vector + keyword + dependency legs, RRF) to
+    # fill the evidence package when the request does not already contain retrieved
+    # documents (Phase 3 wiring of RAG into analysis; Phase 4 adds the dependency leg).
     ai_auto_retrieve: bool = True
 
     # --- Persistence (ai schema only — the app schema is owned by .NET, ADR-0003) ---
@@ -62,9 +67,13 @@ class Settings(BaseSettings):
     # --- Embeddings ---
     # "gemini" (real embedding API) or "mock" (deterministic vectors, $0 dev/tests).
     embedding_provider: str = "gemini"
-    gemini_embedding_model: str = "text-embedding-004"
-    # Dimension comes from the configured embedding model (text-embedding-004 -> 768).
-    # It is config, not code; a model change ⇒ re-index (docs/llm-integration.md §2).
+    # Current GA embedding model (gemini-embedding-2, Aug 2026); the retired
+    # text-embedding-004 is NOT a default anywhere. Dimension is passed explicitly
+    # (output_dimensionality) — 768 is one of Google's recommended settings.
+    gemini_embedding_model: str = "gemini-embedding-2"
+    # Dimension comes from the configured embedding model (gemini-embedding-2 supports
+    # 128–3072; 768 is the Phase 3 default). It is config, not code; a model change
+    # ⇒ re-index (docs/llm-integration.md §2).
     embedding_dimension: int = 768
     embedding_batch_size: int = 32
     embedding_batch_max_retries: int = 3
@@ -106,6 +115,10 @@ class Settings(BaseSettings):
             raise ValueError("GEMINI_TIMEOUT_SECONDS must be in (0, 300].")
         if not 1 <= self.retrieval_top_k <= 100:
             raise ValueError("RETRIEVAL_TOP_K must be in [1, 100].")
+        if not 1 <= self.ai_max_evidence_chunks <= 100:
+            raise ValueError("AI_MAX_EVIDENCE_CHUNKS must be in [1, 100].")
+        if not 500 <= self.ai_max_chars_per_chunk <= 100_000:
+            raise ValueError("AI_MAX_CHARS_PER_CHUNK must be in [500, 100000].")
         return self
 
 

@@ -25,7 +25,7 @@ from ..embeddings.base import (
     IEmbeddingProvider,
 )
 from ..errors import AiProviderError, AiRateLimitedError, AiRequestError
-from ..models.requests import RetrievalSearchRequest, SearchFilters
+from ..models.requests import DependencyRetrieval, RetrievalSearchRequest, SearchFilters
 from ..models.responses import (
     RetrievalResultItem,
     RetrievalResultSources,
@@ -71,16 +71,24 @@ class RetrievalService:
             keyword_ranking, keyword_scores = self._keyword_leg(query, request, candidate_k)
         else:
             keyword_ranking = []
+        # Phase 4 dependency leg: chunks linked to the change by path/symbol/service.
+        # It is a THIRD ranked list inside RRF (see _dependency_leg docstring) — its
+        # influence comes from RRF rank position, never from added vector scores.
+        dependency_ranking = self._dependency_leg(request) if request.dependency else []
 
         if strategy == "hybrid":
-            fused = reciprocal_rank_fusion([vector_ranking, keyword_ranking], k=self._settings.rrf_k)
+            fused = reciprocal_rank_fusion(
+                [vector_ranking, keyword_ranking, dependency_ranking], k=self._settings.rrf_k
+            )
             ranked = fused[: request.k]
         elif strategy == "vector":
             ranked = [(item_id, vector_scores[item_id]) for item_id in vector_ranking][: request.k]
         else:
             ranked = [(item_id, keyword_scores[item_id]) for item_id in keyword_ranking][: request.k]
 
-        results = self._hydrate(request.project_id, ranked, strategy, vector_scores, keyword_ranking)
+        results = self._hydrate(
+            request.project_id, ranked, strategy, vector_scores, keyword_ranking, dependency_ranking
+        )
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
@@ -91,6 +99,7 @@ class RetrievalService:
                 "latencyMs": latency_ms,
                 "vectorCandidates": len(vector_ranking),
                 "keywordCandidates": len(keyword_ranking),
+                "dependencyCandidates": len(dependency_ranking),
             },
         )
         return RetrievalSearchResponse(
@@ -103,18 +112,31 @@ class RetrievalService:
             ),
         )
 
-    def search_queries(self, project_id: str, queries: list[str], *, k: int | None = None) -> list[RetrievalResultItem]:
+    def search_queries(
+        self,
+        project_id: str,
+        queries: list[str],
+        *,
+        k: int | None = None,
+        dependency: DependencyRetrieval | None = None,
+    ) -> list[RetrievalResultItem]:
         """Run several queries and merge results by chunk id (first hit wins), capped at k.
 
-        Used by the analysis flow to build an evidence package from the change summary
-        plus changed-file names — deterministic order, no duplicates.
+        Used by the analysis flow to build an evidence package from the change summary,
+        changed-file names, and symbol names. When `dependency` is given, each query's
+        RRF already fuses the dependency leg into the ranking (Phase 4) — the merge is
+        deterministic order, no duplicates.
         """
         limit = k or self._settings.retrieval_top_k
         merged: dict[str, RetrievalResultItem] = {}
         for query in queries:
             if not query.strip():
                 continue
-            response = self.search(RetrievalSearchRequest(project_id=project_id, query=query, k=limit))
+            response = self.search(
+                RetrievalSearchRequest(
+                    project_id=project_id, query=query, k=limit, dependency=dependency
+                )
+            )
             for item in response.results:
                 merged.setdefault(item.chunk_id, item)
         return list(merged.values())[:limit]
@@ -198,6 +220,51 @@ class RetrievalService:
             scores[chunk_id] = float(row["rank"])
         return ranking, scores
 
+    def _dependency_leg(self, request: RetrievalSearchRequest) -> list[str]:
+        """Chunks whose path/symbol/service match the change's dependency terms.
+
+        Exact matches only (deterministic, evidence-traceable): the Roslyn analyzer's
+        file paths match `c.path` verbatim; class/member names match `c.symbol`; service
+        ids match `c.service`. Results are ordered by chunk id so the RRF rank is stable.
+        Fuzzy matches remain the keyword leg's job (the analysis flow also queries the
+        symbol/file names as text, so both signals reach the candidate set).
+        """
+        dep = request.dependency
+        symbols = [s for s in (dep.symbols or []) if s.strip()]
+        paths = [p for p in (dep.paths or []) if p.strip()]
+        services = [s for s in (dep.services or []) if s.strip()]
+        if not (symbols or paths or services):
+            return []
+
+        clauses: list[str] = []
+        params: dict = {"project_id": request.project_id}
+        if paths:
+            clauses.append("c.path = ANY(:dep_paths)")
+            params["dep_paths"] = paths
+        if symbols:
+            clauses.append("c.symbol = ANY(:dep_symbols)")
+            params["dep_symbols"] = symbols
+        if services:
+            clauses.append("c.service = ANY(:dep_services)")
+            params["dep_services"] = services
+
+        sql = text(
+            """
+            SELECT c.id AS chunk_id
+            FROM ai.document_chunks c
+            JOIN ai.documents d ON d.id = c.document_id
+            WHERE c.project_id = :project_id
+              AND ({or_clauses})
+            ORDER BY c.id
+            LIMIT :limit
+            """.format(or_clauses=" OR ".join(clauses))
+        )
+        params["limit"] = self._settings.retrieval_candidate_k
+
+        with self._db.session() as session:
+            rows = session.execute(sql, params).mappings().all()
+        return [str(r["chunk_id"]) for r in rows]
+
     # --- shared bits ---
 
     def _base_params(self, request: RetrievalSearchRequest, limit: int) -> dict:
@@ -234,11 +301,17 @@ class RetrievalService:
         strategy: str,
         vector_scores: dict[str, float],
         keyword_ranking: list[str],
+        dependency_ranking: list[str] | None = None,
     ) -> list[RetrievalResultItem]:
         if not ranked:
             return []
         ids = [item_id for item_id, _ in ranked]
         keyword_rank_map = {item_id: i + 1 for i, item_id in enumerate(keyword_ranking)}
+        dependency_rank_map = (
+            {item_id: i + 1 for i, item_id in enumerate(dependency_ranking)}
+            if dependency_ranking is not None
+            else {}
+        )
 
         sql = text(
             """
@@ -262,6 +335,7 @@ class RetrievalService:
                 continue
             vector_score = vector_scores.get(item_id) if strategy in ("vector", "hybrid") else None
             keyword_rank = keyword_rank_map.get(item_id) if strategy in ("keyword", "hybrid") else None
+            dependency_rank = dependency_rank_map.get(item_id)
             results.append(
                 RetrievalResultItem(
                     chunk_id=item_id,
@@ -279,11 +353,13 @@ class RetrievalService:
                         "environment": row["environment"],
                         "symbol": row["symbol"],
                         "chunkMetadata": row["metadata"] or {},
+                        "dependency": dependency_rank is not None,
                     },
                     score=round(final_score, 6),
                     sources=RetrievalResultSources(
                         vector=round(vector_score, 6) if vector_score is not None else None,
                         keyword=keyword_rank,
+                        dependency=dependency_rank,
                     ),
                 )
             )

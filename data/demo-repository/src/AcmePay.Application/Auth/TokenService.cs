@@ -16,10 +16,16 @@ namespace AcmePay.Application.Auth;
 /// </summary>
 public sealed class TokenService(IConfiguration configuration)
 {
+    /// <summary>
+    /// Key rotation: `Auth:JwtSigningKeys` is an ordered, comma-separated list. The
+    /// FIRST key signs new tokens; ALL keys in the list validate in-flight tokens. When
+    /// a key is rotated the previous key MUST remain in the list until every in-flight
+    /// token has expired, otherwise callers see "invalid signature" (401) for up to the
+    /// token lifetime. See runbook: authentication-failure.
+    /// </summary>
     public string IssueServiceToken(string serviceName, TimeSpan lifetime)
     {
-        var key = configuration["Auth:JwtSigningKey"]
-            ?? throw new InvalidOperationException("Jwt:SigningKey is not configured.");
+        var current = SigningKeys()[0]; // newest key signs
 
         var claims = new[]
         {
@@ -29,7 +35,7 @@ public sealed class TokenService(IConfiguration configuration)
         };
 
         var signing = new SigningCredentials(
-            new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
+            new SymmetricSecurityKey(Encoding.UTF8.GetBytes(current)),
             SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
@@ -40,5 +46,44 @@ public sealed class TokenService(IConfiguration configuration)
             signingCredentials: signing);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    /// <summary>Validates a service token against the FULL key history (rotation-safe).</summary>
+    public bool TryValidateServiceToken(string token, out string? serviceName)
+    {
+        foreach (var key in SigningKeys())
+        {
+            var parameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
+                ValidIssuer = configuration["Auth:JwtIssuer"],
+                ValidAudience = configuration["Auth:JwtAudience"],
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1)
+            };
+
+            try
+            {
+                var principal = new JwtSecurityTokenHandler().ValidateToken(token, parameters, out _);
+                serviceName = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+                return true;
+            }
+            catch (SecurityTokenException)
+            {
+                // wrong key (or expired) — try the previous key in the rotation history
+            }
+        }
+
+        serviceName = null;
+        return false;
+    }
+
+    private IReadOnlyList<string> SigningKeys()
+    {
+        var raw = configuration["Auth:JwtSigningKeys"] ?? configuration["Auth:JwtSigningKey"]
+            ?? throw new InvalidOperationException("Auth:JwtSigningKeys is not configured.");
+
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 }

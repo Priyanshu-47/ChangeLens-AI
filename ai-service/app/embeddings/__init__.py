@@ -31,7 +31,12 @@ __all__ = [
 def build_embedding_provider(settings: Settings) -> IEmbeddingProvider:
     """Create the configured embedding provider. Raises ValueError on invalid config."""
     if settings.embedding_provider == "mock":
-        return MockEmbeddingProvider(dimension=settings.embedding_dimension)
+        # The mock's model label tracks the configured real model so a model change is
+        # visible in model_version (and therefore triggers a re-embed) even in mock mode.
+        return MockEmbeddingProvider(
+            dimension=settings.embedding_dimension,
+            model=f"mock-{settings.gemini_embedding_model}",
+        )
     if settings.embedding_provider == "gemini":
         return GeminiEmbeddingProvider(
             api_key=settings.gemini_api_key or "",

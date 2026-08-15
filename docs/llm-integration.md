@@ -24,7 +24,7 @@ Every result carries `usage { inputTokens, outputTokens, latencyMs }` so the bac
 | --- | --- | --- | --- |
 | API key | `GEMINI_API_KEY` | *(required)* | Free tier; never committed |
 | Text model | `GEMINI_TEXT_MODEL` | `gemini-3.7-flash` | Current GA "workhorse" model (Aug 2026). **Default is a starting point, not a contract** — the service probes available models at readiness check and logs a clear warning if the configured model is unavailable/deprecated |
-| Embedding model | `GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | Verify against account; model change ⇒ re-index |
+| Embedding model | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Current GA (Aug 2026); `text-embedding-004` is retired and is **never** a default. Dimension passed explicitly (`output_dimensionality`, default 768); model/dimension change ⇒ re-index |
 | Max output tokens | `GEMINI_MAX_OUTPUT_TOKENS` | 8192 | Bounded to control cost/latency |
 | Request timeout / retries | `GEMINI_TIMEOUT_SECONDS` / `GEMINI_MAX_RETRIES` | 60 / 3 | Retry only on 429/5xx with backoff + jitter |
 
@@ -72,7 +72,32 @@ Prompts are **versioned files** (`app/llm/prompts/risk_v3.txt`, `investigation_v
 - **Token budget per call:** retrieved evidence is trimmed (by score, capped at ~N tokens, configurable) before the prompt is built — the context never silently overflows; overflow is a truncation decision with metadata, not a surprise.
 - **Cost floor:** analysis endpoints are the only LLM consumers in workflow paths; retrieval is embedding-only (cheap); summaries on the dashboard are deferred until Phase 8 to keep free-tier spend bounded.
 
-## 6. Cost control ($0-first)
+## 6. Change-model context & context budget (Phase 4)
+
+The change-risk request no longer ships raw evidence from the client — the system
+discovers it (Roslyn → dependency graph → retrieval). The AI request carries a
+structured change model and the AI service assembles the evidence package:
+
+- **Change model:** change summary, changed symbols (kind, FQN, file, signature), added /
+  removed / modified symbol sets, impacted symbols, dependency edges (CALLS /
+  REFERENCES_TYPE / IMPLEMENTS / INHERITS), dependency paths, impacted services, impacted
+  APIs (controller / route / method / DTOs), external-integration impacts, warnings.
+- **Evidence ids are stable per evidence type:** `chunk:<uuid>` (retrieved documents),
+  `symbol:<fqn>` (changed/impacted code), `dependency:<from> -> <to>` (graph edges). The
+  grounding validator is unchanged — it checks every referenced id against the rendered
+  evidence index, and unknown ids still fail validation.
+- **Context budget (configurable):** `MAX_EVIDENCE_CHUNKS`, `MAX_CHARS_PER_CHUNK`, and a
+  total context-token cap. High-ranked evidence is prioritized; over-budget evidence is
+  trimmed as an explicit truncation decision with metadata — the context never silently
+  overflows.
+- **Uncertainty is a first-class output:** the schema's `unknowns` field and prompt
+  instructions prefer "no deployment telemetry supplied" over invented evidence.
+
+The prompt template (`app/llm/prompts/risk_v1.txt`) renders the change section and the
+indexed evidence inside `<evidence id="…">` blocks — the LLM reasons over the index, it
+never parses source files itself.
+
+## 7. Cost control ($0-first)
 
 | Control | Detail |
 | --- | --- |
@@ -84,7 +109,7 @@ Prompts are **versioned files** (`app/llm/prompts/risk_v3.txt`, `investigation_v
 | Evaluation cost guard | Eval runs accept a `limit` and default to a small dataset slice; a full-pipeline run is an explicit, cost-labeled action |
 | Local option | `EMBEDDING_PROVIDER=local` + mocked LLM in tests = **zero Gemini spend in CI and unit tests** |
 
-## 7. Model-availability risk (deprecated-model rule)
+## 8. Model-availability risk (deprecated-model rule)
 
 - Model names are configuration, not code. The default in `.env.example` is a current GA model (checked Aug 2026); when Google deprecates it, the fix is an env change + a quick smoke eval, not a code change.
 - The readiness probe validates availability; evaluation runs catch quality regressions from a model swap before it reaches demo users.

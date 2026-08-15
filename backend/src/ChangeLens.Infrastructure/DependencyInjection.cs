@@ -1,4 +1,5 @@
 using ChangeLens.Application.Ports;
+using ChangeLens.Infrastructure.Analysis;
 using ChangeLens.Infrastructure.Identity;
 using ChangeLens.Infrastructure.Options;
 using ChangeLens.Infrastructure.Persistence;
@@ -42,6 +43,13 @@ public static class DependencyInjection
 
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.Configure<AiOptions>(configuration.GetSection(AiOptions.SectionName));
+        services.Configure<ChangeSourceOptions>(configuration.GetSection(ChangeSourceOptions.SectionName));
+
+        // Phase 4 change intelligence (ADR-0011: Roslyn lives in Infrastructure).
+        services.AddSingleton<RoslynAnalyzer>();
+        services.AddSingleton<ChangeAnalyzer>();
+        services.AddScoped<IChangeSource, GitChangeSource>();
+        services.AddScoped<IChangeAnalysisEngine, ChangeAnalysisEngine>();
 
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<AuthenticationService>();

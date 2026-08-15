@@ -77,6 +77,14 @@ def build_evidence_index(request: RiskAnalysisRequest) -> list[str]:
         ids.append(f"incident:{i.incident_id}")
     for r in request.runbooks:
         ids.append(f"runbook:{r.id}")
+    # Phase 4 change-intelligence evidence: symbols are stable ids from the Roslyn
+    # analyzer; dependency edges reference the exact graph edge the analyzer proved.
+    for s in request.changed_symbols:
+        ids.append(f"symbol:{s.symbol_id}")
+    for s in request.impacted_symbols:
+        ids.append(f"symbol:{s.symbol_id}")
+    for e in request.dependency_edges:
+        ids.append(f"dependency:{e.from_symbol_id} -> {e.to_symbol_id}")
     return ids
 
 
@@ -95,6 +103,7 @@ def build_risk_prompt(
     *,
     prompt_version: str | None = None,
     max_evidence_chars: int = 120_000,
+    max_chars_per_chunk: int | None = None,
 ) -> PromptBundle:
     """Render the layered risk-analysis prompt for one request."""
     version = prompt_version or DEFAULT_PROMPT_VERSION
@@ -107,7 +116,11 @@ def build_risk_prompt(
     )
     system = system_template.replace("{schema}", schema_json)
 
-    user = _render_user_section(request, max_evidence_chars=max_evidence_chars)
+    user = _render_user_section(
+        request,
+        max_evidence_chars=max_evidence_chars,
+        max_chars_per_chunk=max_chars_per_chunk,
+    )
     return PromptBundle(
         system=system,
         messages=[{"role": "user", "content": user.text}],
@@ -116,7 +129,12 @@ def build_risk_prompt(
     )
 
 
-def _render_user_section(request: RiskAnalysisRequest, *, max_evidence_chars: int) -> "UserSection":
+def _render_user_section(
+    request: RiskAnalysisRequest,
+    *,
+    max_evidence_chars: int,
+    max_chars_per_chunk: int | None = None,
+) -> "UserSection":
     parts: list[str] = [_DATA_HEADER, ""]
     truncated = False
 
@@ -138,6 +156,29 @@ def _render_user_section(request: RiskAnalysisRequest, *, max_evidence_chars: in
         parts.append("</changed_file>")
     parts.append("</changed_files>")
     parts.append("")
+
+    # Phase 4 change-intelligence context: the normalized symbol model and the
+    # dependency edges the Roslyn analyzer proved. Rendered as DATA with stable ids
+    # (symbol:<id>, dependency:<from> -> <to>) that are part of the grounding index.
+    if request.changed_symbols or request.impacted_symbols or request.dependency_edges:
+        parts.append("<change_model>")
+        if request.changed_symbols:
+            parts.append("changed_symbols:")
+            for s in request.changed_symbols:
+                parts.append(_render_symbol(s))
+        if request.impacted_symbols:
+            parts.append("impacted_symbols (dependents reachable via the dependency graph):")
+            for s in request.impacted_symbols:
+                parts.append(_render_symbol(s))
+        if request.dependency_edges:
+            parts.append("dependency_edges (each with evidence id `dependency:<from> -> <to>`):")
+            for e in request.dependency_edges:
+                parts.append(
+                    f"dependency:{e.from_symbol_id} -> {e.to_symbol_id} "
+                    f"({e.edge_type})"
+                )
+        parts.append("</change_model>")
+        parts.append("")
 
     # Evidence items (retrieved docs by score first, then the rest), trimmed to the
     # configured character budget. Truncation is a decision with metadata, not a surprise.
@@ -165,6 +206,9 @@ def _render_user_section(request: RiskAnalysisRequest, *, max_evidence_chars: in
     parts.append("<evidence_package>")
     for eid, etype, content, _score in evidence_items:
         safe = sanitize_evidence(content)
+        if max_chars_per_chunk is not None and len(safe) > max_chars_per_chunk:
+            safe = safe[:max_chars_per_chunk]
+            truncated = True
         if len(safe) > budget:
             safe = safe[:budget]
             truncated = True
@@ -186,6 +230,21 @@ def _render_user_section(request: RiskAnalysisRequest, *, max_evidence_chars: in
     parts.append("</evidence_index>")
 
     return UserSection(text="\n".join(parts), evidence_truncated=truncated)
+
+
+def _render_symbol(s: "object") -> str:
+    """One symbol line for the change-model section (id first — it is the evidence id)."""
+    name = getattr(s, "name", "")
+    kind = getattr(s, "kind", "")
+    fqn = getattr(s, "fully_qualified_name", "") or name
+    params = ", ".join(getattr(s, "parameters", []) or [])
+    location = " ".join(
+        p
+        for p in (getattr(s, "file_path", None), getattr(s, "project", None))
+        if p
+    )
+    line = f"symbol:{getattr(s, 'symbol_id', '')} | {kind} {fqn}({params}) | {location}"
+    return line.strip()
 
 
 @dataclass

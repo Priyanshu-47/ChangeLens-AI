@@ -57,19 +57,19 @@ sequenceDiagram
     participant G as Gemini API
     participant P as PostgreSQL
 
-    U->>A: POST /api/v1/changes/{id}/analyze
-    A->>A: Parse changed files (Roslyn), compute dependency impact, extract API contracts
-    A->>P: Query incidents, runbooks, deployments (deterministic keyword/structured queries)
-    A->>AI: POST /internal/v1/retrieval/search (semantic, project-scoped, metadata-filtered)
-    AI->>P: pgvector + tsvector search, RRF merge
-    AI-->>A: Ranked documents with scores + metadata
-    A->>AI: POST /internal/v1/analysis/risk (evidence package + schema version)
+    U->>A: POST /api/v1/analyses/change-risk (change files + base/target revision)
+    A->>A: Resolve base→target via safe local git; Roslyn symbol + dependency analysis; impact traversal; API + external-integration impact
+    A->>A: Build change model (changed/impacted symbols, edges, paths); persist analysis_runs
+    A->>AI: POST /internal/v1/analyses/change-risk (change model; AI discovers evidence)
+    AI->>AI: Hybrid retrieval: vector + keyword + metadata + dependency terms → RRF
+    AI->>P: pgvector + tsvector search, project-scoped, dependency-linked candidates
+    AI-->>A: Evidence package (chunk:/symbol:/dependency: ids) inside the AI request
     AI->>G: generateContent(responseSchema=RiskReportSchema)
     G-->>AI: JSON candidate
     AI->>AI: Pydantic validation → repair loop (≤2) → safe failure
     AI-->>A: Validated RiskReport + tokens/latency/cost metadata
-    A->>P: Persist RiskReport, RiskFactors, EvidenceItems, RecommendedTests, AnalysisRun
-    A-->>U: 202 Accepted → GET /api/v1/analyses/{id} polls to completion
+    A->>P: Persist analysis_runs status (Succeeded/Failed) + audit log
+    A-->>U: 200 RiskReport (evidence-grounded)
 ```
 
 ### Workflow B — Incident Investigation
@@ -158,7 +158,8 @@ Rationale: one container, one backup, $0, and pgvector on the same instance. Cos
 - **No message broker** (Redis/Kafka/SQS) — ingestion and analysis are synchronous-or-job-based; SQS is only a Phase 10 async option. No demonstrated requirement in MVP.
 - **No multi-agent framework** — a single controlled tool-using loop covers both workflows; multi-agent would be marketing, not engineering. [ADR-0008]
 - **No LangChain/LlamaIndex dependency** — the RAG pipeline here is small, and owning it makes evaluation, prompt injection defense, and observability explicit and testable.
-- **No real GitHub integration in MVP** — changes are submitted via API/demo data; GitHub App integration is a post-MVP option. Roslyn parses the actual files either way.
+- **No real GitHub integration in MVP** — changes are submitted via API/demo data and resolved through a **local, sandboxed git change source** (repository path restricted to a configured root, validated revisions, fixed git argument list — no arbitrary shell commands, no remote fetch). GitHub App integration is a post-MVP option; Roslyn parses the actual files either way.
+- **No graph database (Neo4j)** — the dependency graph is an in-memory derived artifact rebuilt per analysis from Roslyn; PostgreSQL remains the only database.
 
 ## 9. Deployment targets
 

@@ -18,6 +18,10 @@
 | R10 | Golden dataset too small / biased → eval numbers misleading | M | M | Honest labeling (dataset size, slice limits), metrics scoped to the dataset, "measured on N cases" in UI | 7 |
 | R11 | Free-tier hosting demo flakiness (cold starts, expiry) | H | L | Local Docker is the primary demo; free tiers are optional and caveated | 9 |
 | R12 | Solo-developer bandwidth across three codebases | H | M | Vertical slices per phase; contracts before code; tests prevent regressions | all |
+| R13 | Roslyn graph is best-effort semantics (unresolved references, top-level statements, exotic syntax) → missing edges | M | M | Semantic model over syntax trees + documented extraction scope; edge types limited to what Roslyn proves; unknown edges surface as warnings, never as claims; deterministic fixture tests pin the supported shapes | 4 |
+| R14 | Local-git change source misused (traversal, weird revisions, repo escaping sandbox) | L | H | Path/revision validation, fixed argument list (no shell), repository restricted to configured root, project isolation regression tests; analyzed source is parsed, never executed | 4 |
+| R15 | In-memory dependency graph rebuilt per analysis → latency / no cross-analysis reuse | M | L | Demo-scale graph builds in ~1–2 s; deterministic change identifiers allow future caching in Postgres; measured durations recorded, no fabricated perf claims | 4 |
+| R16 | Dependency retrieval leg ranks by connectivity, so top hits may not match the change text | M | M | Dependency is an explicit third RRF list, never blended into vector scores; per-leg metadata explains *why* each hit surfaced; evaluation (Phase 7) will compare modes | 4 |
 
 L = likelihood (L/M/H), I = impact (L/M/H).
 
@@ -36,6 +40,10 @@ L = likelihood (L/M/H), I = impact (L/M/H).
 | Identity+JWT vs Cognito in MVP | Simple, local, testable | Real SSO is a later seam | ADR-0012 |
 | Local embeddings + mocked LLM in CI/tests | $0 test budget, deterministic tests | CI doesn't exercise real Gemini (smoke tests do, manually) | ADR-0006, llm §6 |
 | C# first-class parsing; others best-effort | Depth where it matters for the demo | Multi-language depth is post-MVP | R8 |
+| Roslyn in .NET, retrieval in AI service (ADR-0011) | Symbol/dependency analysis where the ecosystem is strongest; stable evidence ids across the boundary | Two runtimes must agree on the change model contract | ADR-0011 |
+| In-memory dependency graph instead of Neo4j | One database, no extra infra, rebuilt per analysis | No persistent graph queries or cross-run graph analytics | R15 |
+| Local git change source instead of GitHub integration | Safe, deterministic, demo-controlled; no webhooks | Real-PR workflows (webhooks, remote fetch) are post-MVP | R14 |
+| Dependency as a separate retrieval leg (RRF) instead of blended scores | Connectivity evidence stays explainable and comparable | Ranking across heterogeneous legs needs per-leg metadata | R16 |
 
 ## 3. Open questions for review
 

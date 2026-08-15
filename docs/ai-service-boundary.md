@@ -53,7 +53,7 @@ All requests carry `X-Internal-Key: <INTERNAL_API_KEY>` and `X-Contract-Version:
   "filters": { "serviceId": "…", "language": "csharp", "environment": "production" },
   "strategy": "hybrid",                   // hybrid | vector | keyword (used by evaluation)
   "k": 10,
-  "embeddingModel": "text-embedding-004"  // optional override
+  "embeddingModel": "gemini-embedding-2"   // optional override (GA model)
 }
 ```
 → `200`:
