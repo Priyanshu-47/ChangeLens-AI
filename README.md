@@ -1,58 +1,121 @@
 # ChangeLens AI
 
-**AI-powered Production Change Risk & Incident Intelligence Platform.**
+**AI-powered production change risk & incident intelligence platform.**
 
-ChangeLens helps engineering teams answer two questions:
+ChangeLens answers the two questions engineering teams ask around every production change:
 
 1. **Before deployment** — *"What could this code change break?"*
-2. **After deployment** — *"Something broke. What changed, what is likely affected, and what evidence supports the possible root cause?"*
+2. **After deployment** — *"Something broke. What changed, what is likely affected, and what evidence supports the root cause?"*
 
-It combines source-code analysis, dependency analysis, API contract analysis, historical incident retrieval, semantic search (RAG), structured LLM reasoning, controlled tool use, incident investigation, AI evaluation, and observability — without being a generic chatbot.
+It combines source-code analysis (Roslyn), dependency-graph impact analysis, hybrid RAG over historical incidents + runbooks + code, structured LLM reasoning, a *controlled* AI tool loop, async incident investigation, deterministic evaluation, and full AI traceability — a production-shaped system, not a chatbot.
 
-## Status
+## Problem
 
-**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete. Phase 4 (Change intelligence) — complete. Phase 5 (Incident investigation + async analysis) — complete. Phase 6 (React UI) — complete. Phase 7 (Evaluation + AI observability) — complete. Phase 8 (Controlled AI tools + tool tracing) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; Phase 3 adds a real RAG pipeline (structure-aware chunking, deterministic + Gemini embeddings, pgvector in the `ai` schema, RRF hybrid retrieval with grounding enforcement); Phase 4 adds the change-intelligence engine — a Roslyn analyzer and dependency graph in .NET, symbol-level change analysis with impact traversal, a safe local-git change source, a dependency retrieval leg (vector + keyword + metadata + dependency → RRF), `analysis_runs` persistence, and a demo scenario — an uncommitted signing-key follow-up change in `TokenService.cs` that the analyzer resolves against git HEAD. Phase 5 adds the **incident investigation workflow** (normalized incident context → hybrid retrieval → grounded `rootCauseCandidates[]` + remediation + unknowns) and the **async job system** — `POST /incidents/{id}/investigate` → `202` → bounded in-process queue + background worker → `GET /analyses/{id}` polling, with an enforced job state machine (`Queued → Running → Succeeded | Failed`), bounded retries, per-job timeouts, idempotency keys, and cross-project isolation. Phase 6 adds the **React dashboard** (`frontend/`, Vite + TS + React Router): login/protected routes, project context, incidents with timeline + investigate (202), async polling, the evidence-linked investigation result page (root-cause candidates, evidence explorer, grounding badge, unknowns), and the change-risk submission screen. Phase 7 adds **deterministic evaluation + AI observability**: a versioned 20-case golden dataset runner (`python -m app.evaluation.run`, mock providers, zero Gemini) with per-leg ablation (vector/keyword/dependency/hybrid), Recall@K / Precision@K / MRR / Hit Rate, grounding + schema checks, JSON/Markdown reports and JSON-baseline regression comparison (see [docs/evaluation.md](docs/evaluation.md)); per-analysis traces (`analysis_runs.TraceJson`) with real stage timings, retrieval-leg attribution, and normalized failure categories, exposed via `GET /api/v1/analyses/{id}/trace` and rendered in a React Trace panel + Retrieval Explorer. Mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`. Phase 8 adds a **controlled tool loop** ([docs/agent-tools.md](docs/agent-tools.md)): the AI proposes tool calls, the backend validates, authorizes, executes, and audits them — seven read-only, project-isolated tools (`get_incident`, `get_incident_timeline`, `get_service`, `get_runbook`, `get_source_symbol`, `get_dependency_paths`, `search_evidence`), a bounded loop (`Analysis:MaxToolCalls`), per-tool timeouts, tool-call records in the trace + audit log, a Tool Calls section in the React trace panel, and tool-loop metrics in the evaluation runner. No shell/SQL/URL/write tools exist; Python never executes tools. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
+Post-incident reviews are slow because evidence is scattered: git history, deployment logs, runbooks, past incidents, and source code live in different tools with different vocabularies. Risk analysis before a deploy is usually a manual reading of a diff. ChangeLens treats this as an engineering problem: a change model → a dependency graph → grounded evidence retrieval → schema-validated, evidence-cited analysis — with the system explicitly saying what it **does not know**.
 
-| Phase | Deliverable | Status |
+## Why this matters (for a portfolio)
+
+- Two complete production workflows, both grounded and auditable.
+- **Controlled agents, not multi-agent theater**: the AI proposes tool calls; the application validates, authorizes, executes, and audits them. No arbitrary SQL/shell/URL/write tools exist.
+- **Deterministic evaluation** against a versioned 20-case golden dataset with per-leg retrieval ablation — measured, honest numbers, no LLM-as-judge, no fabricated metrics.
+- **$0-first**: runs entirely on local Docker + PostgreSQL + pgvector + the Gemini free tier; CI is mock-based and free.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    FE["React SPA (Vite + TS)"] -->|"REST /api/v1 · JWT"| BE
+    BE["ASP.NET Core 10<br/>authz · domain · orchestration · audit"] -->|"REST /internal/v1 · X-Internal-Key"| AI
+    BE --> PG[("PostgreSQL + pgvector<br/>app schema (EF) + ai schema (Alembic)")]
+    AI["Python FastAPI<br/>prompts · structured output · grounding · hybrid RAG"] --> PG
+    AI --> G["Gemini API<br/>(provider abstraction — mock for $0)"]
+```
+
+**Workflow A — Change Risk:** code change → Roslyn symbol analysis → dependency graph → hybrid retrieval (vector + keyword + dependency → RRF) → grounded risk report.
+
+**Workflow B — Incident Investigation:** incident → `202` async job → normalized context → hybrid retrieval → **controlled tool loop** → grounded root-cause candidates + remediation + unknowns.
+
+## Key capabilities
+
+| Capability | What it is |
+| --- | --- |
+| Change intelligence | Roslyn analyzer + in-memory dependency graph in .NET; symbol-level change analysis with bounded impact traversal (safe local-git change source — never executes repo code) |
+| Hybrid RAG | Structure-aware chunking (tree-sitter for code, heading-aware for incidents/runbooks), pgvector cosine + PostgreSQL FTS + metadata filters + dependency leg, merged with RRF; hard project isolation in every SQL statement |
+| Structured AI output | Pydantic-validated results with bounded repair; deterministic grounding rule (every cited evidence ID must exist; empty/unknown ids rejected); layered prompt architecture that treats evidence as untrusted data |
+| Async analysis | `POST /incidents/{id}/investigate` → `202` → bounded in-process queue + background worker (concurrency-capped, cancellable, retries only transient failures) → `GET /analyses/{id}` polling; explicit job state machine |
+| Controlled AI tools | AI proposes; .NET validates/authorizes/executes/audits. Seven read-only, project-isolated tools (`get_incident`, `get_incident_timeline`, `get_service`, `get_runbook`, `get_source_symbol`, `get_dependency_paths`, `search_evidence`); bounded loop, per-tool timeouts, tool-call trace |
+| Evaluation | Versioned 20-case golden dataset runner (`python -m app.evaluation.run`, mock providers, zero Gemini): Recall@K / Precision@K / MRR / Hit Rate per leg, grounding + schema checks, per-case tool trace, JSON/Markdown reports, baseline comparison |
+| Observability | Per-analysis trace (`analysis_runs.TraceJson`): real stage timings (Context / Roslyn / Dependency Graph / AI / Persistence), retrieval-leg attribution, tool calls, normalized failure categories; `GET /analyses/{id}/trace`; React trace panel + retrieval explorer |
+| Security | JWT + RBAC + project-level authorization (404 for invisible resources), cross-project isolation tested end-to-end, prompt-injection defense (evidence is data, never instructions), no secrets in logs, append-only audit trail, controlled CORS, in-memory rate limiting |
+
+## Tech stack
+
+React 18 + TypeScript + Vite · ASP.NET Core 10 · FastAPI (Python 3.12+) · PostgreSQL + pgvector · Entity Framework Core + Alembic · Roslyn · tree-sitter · Gemini (provider abstraction) · GitHub Actions
+
+## Quick start (Docker — full stack)
+
+Prerequisites: Docker (with Compose). Everything else is containerized.
+
+```bash
+git clone <repo> && cd changelens-ai
+cp .env.example .env            # fill INTERNAL_API_KEY + JWT_SIGNING_KEY (any strong values locally)
+docker compose up -d --build    # postgres + ai-service + backend + frontend
+
+# Seed the demo corpus (mock embeddings — deterministic, $0, idempotent):
+cd ai-service
+DATABASE_URL="postgresql+psycopg://changelens:changelens_dev_password@localhost:5432/changelens" \
+EMBEDDING_PROVIDER=mock ./.venv/Scripts/python scripts/seed_demo.py
+```
+
+Open **http://localhost:8080** and log in with a **development-only** seeded account:
+
+| Role | Email | Password |
 | --- | --- | --- |
-| 0 | Architecture, ADRs, domain model, API contract, repo structure | ✅ Complete |
-| 1 | ASP.NET Core API + PostgreSQL + EF Core foundation | ✅ Complete |
-| 2 | FastAPI AI service + Gemini provider | ✅ Complete |
-| 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ✅ Complete |
-| 4 | Change intelligence: Roslyn + dependency graph + change-risk pipeline | ✅ Complete |
-| 5 | Incident investigation + async analysis jobs (202 + poll) | ✅ Complete |
-| 6 | React UI — dashboard, incident investigation, change risk | ✅ Complete |
-| 7 | Evaluation + AI observability (runner, trace, retrieval explorer) | ✅ Complete |
-| 8 | Controlled AI tools + tool tracing (registry, loop, audit, trace UI) | ✅ Complete |
-| 9 | Observability + security hardening | ⏳ Pending |
-| 10 | Docker + CI/CD | ⏳ Pending |
-| 11 | AWS deployment (only after local MVP is stable) | ⏳ Pending |
+| Admin | `admin@changelens.dev` | `AdminPass!2026` |
+| Engineer | `engineer@changelens.dev` | `EngineerPass!2026` |
+| Viewer | `viewer@changelens.dev` | `ViewerPass!2026` |
 
-## Architecture at a glance
+> These credentials exist only in local `Development` seeding — never use them outside a dev/demo environment.
 
-```
-React (TypeScript SPA)
-   ↓ REST /api/v1 (JWT)
-ASP.NET Core 10 Web API   ← orchestration, domain, persistence, auth, audit
-   ↓ REST /internal/v1
-Python FastAPI AI Service ← ingestion, embeddings, hybrid retrieval, LLM reasoning
-   ↓
-Gemini API
+No Docker? `scripts/start-local-postgres.sh` starts a project-local PostgreSQL; then run the backend, AI service, and frontend natively per their READMEs. Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md), [frontend/README.md](frontend/README.md). Walk through the whole product in ~5 minutes with [docs/demo-script.md](docs/demo-script.md).
+
+## Tests
+
+```bash
+cd backend && dotnet test                                    # 187 unit tests
+CHANGELENS_TEST_CONNECTION_STRING="Host=localhost;Port=5433;Database=changelens_test;Username=changelens" \
+  dotnet test tests/ChangeLens.Api.IntegrationTests          # 53 integration tests (real PostgreSQL)
+cd ../ai-service && ./.venv/Scripts/python -m pytest -q      # 157 unit tests — zero Gemini, no DB
+TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
+  ./.venv/Scripts/python -m pytest tests/test_db_integration.py -q   # 12 pgvector integration tests
+cd ../frontend && npm test && npm run build                  # 34 tests + production build
 ```
 
-One PostgreSQL instance hosts two logical schemas: the **app** schema (relational domain data, owned by EF Core) and the **ai** schema (documents, chunks, embeddings, owned by the AI service), with **pgvector** for vector search.
+CI (`.github/workflows/ci.yml`) runs all of this at **$0** with mock providers and a PostgreSQL service container — no Gemini key, no AWS.
 
-## Repository layout
+## Evaluation results (measured, mock providers — synthetic corpus)
 
-```
-changelens-ai/
-├── backend/        ASP.NET Core 10 Web API (+ tests)
-├── ai-service/     Python FastAPI AI service (+ tests)
-├── frontend/       React + TypeScript SPA
-├── docker/         Compose files and Dockerfiles
-├── docs/           Architecture docs, ADRs, API contract, etc.
-└── data/           Demo dataset + golden evaluation dataset (seeded)
-```
+Runner: `cd ai-service && DATABASE_URL="…" ./.venv/Scripts/python -m app.evaluation.run`. Report: `data/evaluation-output/evaluation-report.md` (gitignored).
+
+- **20/20 cases evaluated** (dataset `v1`) · schema-valid 20/20 · grounded 20/20
+- Retrieval (Recall@5 / Recall@10 / MRR):
+  - vector **0.625 / 0.679 / 0.975** · keyword **0.529 / 0.546 / 1.000** · hybrid **0.583 / 0.617 / 1.000**
+  - dependency leg scores 0 on retrieval-style queries (it is change-model-driven — reported, not hidden)
+- Tool loop: 20/20 loops completed, 40/40 proposals valid, 20/20 grounding after tools
+
+Honest caveats: these are **synthetic-corpus + mock-embedding results that prove the framework**, not production accuracy; hybrid does not beat vector alone on this dataset — the ablation is the point (see [docs/evaluation.md](docs/evaluation.md)).
+
+## Known limitations
+
+- **Live Gemini structured output**: the configured `gemini-3.1-flash-lite` currently rejects the project's structured-output schema with HTTP 400. The provider abstraction is intact and the live path was code-fixed and smoke-tested in earlier phases; normal tests/CI/eval all run with the deterministic mock provider. **Live Gemini analysis is not claimed to work.**
+- No reranker; no LLM-as-judge (deliberate — deterministic evaluation first).
+- Async queue and rate limiter are in-process (single instance by design).
+- Docker Compose is statically validated in the authoring environment; `docker compose up --build` is the explicit next verification on a Docker-equipped machine.
+- No hosted deployment (local Docker is the official MVP; see [docs/deployment-strategy.md](docs/deployment-strategy.md)).
+
+## Screenshots
+
+Not captured in this environment — the UI is fully described and covered by 34 component tests (login, project dashboard, incident detail, async investigation, analysis result with evidence linking, grounding badge, unknowns, change-risk, trace + tool calls). See [docs/demo-script.md](docs/demo-script.md) for exactly what each screen shows.
 
 ## Documentation
 
@@ -64,59 +127,33 @@ changelens-ai/
 | [docs/domain-model.md](docs/domain-model.md) | Entities, ER diagram, schema ownership |
 | [docs/api-contract.md](docs/api-contract.md) | REST conventions, endpoint catalog, DTOs, async job pattern |
 | [docs/ai-service-boundary.md](docs/ai-service-boundary.md) | AI service responsibilities and internal API |
-| [docs/rag-architecture.md](docs/rag-architecture.md) | Chunking, embeddings, hybrid retrieval, reranking |
+| [docs/rag-architecture.md](docs/rag-architecture.md) | Chunking, embeddings, hybrid retrieval, RRF |
 | [docs/llm-integration.md](docs/llm-integration.md) | Gemini integration, provider abstraction, cost control |
-| [docs/security-model.md](docs/security-model.md) | AuthN/AuthZ, prompt injection defense, secrets, audit |
+| [docs/security-model.md](docs/security-model.md) | AuthN/AuthZ, prompt injection defense, secrets, audit, production checklist |
 | [docs/deployment-strategy.md](docs/deployment-strategy.md) | $0-first local Docker, free tiers, AWS path |
 | [docs/evaluation.md](docs/evaluation.md) | Metrics, dataset, runner, trace architecture, limitations |
-| [docs/agent-tools.md](docs/agent-tools.md) | Phase 8 tool loop: registry, safety, trace, audit, evaluation |
+| [docs/agent-tools.md](docs/agent-tools.md) | Tool loop: registry, safety, trace, audit, evaluation |
+| [docs/costs.md](docs/costs.md) | Cost model — local $0, Gemini free tier, optional AWS |
+| [docs/demo-script.md](docs/demo-script.md) | 3–5 minute interview demo |
 | [docs/development-sequence.md](docs/development-sequence.md) | Phase-by-phase plan with exit criteria |
 | [docs/risks-and-tradeoffs.md](docs/risks-and-tradeoffs.md) | Risk register, trade-offs, open questions |
 | [docs/definition-of-done.md](docs/definition-of-done.md) | Definition of Done for the MVP |
 | [docs/adr/](docs/adr/) | Architecture Decision Records (12) |
 
-## Development principles
+## Status
 
-- **Correct architecture > quantity of code > number of AI features.**
-- **$0-first portfolio project.** Local Docker, PostgreSQL + pgvector, Gemini free tier. No paid infrastructure in the MVP.
-- **Deterministic by default.** LLMs are used for reasoning, evidence synthesis, hypothesis generation, and test-scenario generation — never for parsing, dependency calculation, file-type checks, or database queries.
-- **Evidence > claims.** Every major AI conclusion references evidence the user can inspect. No ungrounded assertions.
-- **No fabricated metrics.** Evaluation dashboards show only results from actual evaluation runs.
-- **Structured AI output.** Main analysis results are schema-validated JSON, never uncontrolled prose.
-- **Untrusted data.** Repository contents, logs, and incidents are data, never instructions.
+**Phases 0–9 complete.** Phase 9 delivered production hardening + deployment readiness: full four-service Docker Compose (frontend nginx container, DB-gated healthchecks, non-root everywhere), controlled CORS, in-memory rate limiting, non-dev secret validation, $0 GitHub Actions CI (including the evaluation runner), and per-case tool trace in evaluation reports. **Phase 10 (optional AWS) only after the local MVP is stable.**
 
-## Getting started
-
-1. Copy `.env.example` to `.env` and fill in the placeholders (at minimum the internal key; add `GEMINI_API_KEY` for real LLM calls).
-2. Start the stack — PostgreSQL plus the two services:
-   ```bash
-   docker compose up -d          # postgres + ai-service + backend
-   # or without Docker: bash scripts/start-local-postgres.sh, then run the services directly
-   # (see backend/README.md and ai-service/README.md)
-   ```
-3. Apply migrations (first run) and verify:
-   ```bash
-   cd backend
-   dotnet ef database update --project src/ChangeLens.Infrastructure --startup-project src/ChangeLens.Api
-   cd src/ChangeLens.Api && dotnet run   # http://localhost:5000/swagger
-   # AI service: the ai schema migration runs automatically in Docker (alembic upgrade head);
-   # natively: cd ai-service && DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" \
-   #   .venv/Scripts/python -m alembic upgrade head
-   ```
-4. Seed the demo corpus (optional but recommended):
-   ```bash
-   cd ai-service
-   DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens" \
-   EMBEDDING_PROVIDER=mock AI_PROVIDER=mock INTERNAL_API_KEY=change-me-internal-key \
-     .venv/Scripts/python scripts/seed_demo.py
-   ```
-5. Run the tests:
-   ```bash
-   cd backend && dotnet test tests/ChangeLens.UnitTests
-   CHANGELENS_TEST_CONNECTION_STRING="…test connection string…" dotnet test tests/ChangeLens.Api.IntegrationTests
-   cd ../ai-service && .venv/Scripts/python -m pytest -q   # 139 tests, zero Gemini calls, no DB needed
-   TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
-     .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # pgvector integration tests
-   ```
-
-Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md). The four-service `docker compose up` (adding the React frontend) is a Phase 10 goal — the Phase 3 compose already runs postgres (pgvector image) + ai-service + backend.
+| Phase | Deliverable | Status |
+| --- | --- | --- |
+| 0 | Architecture, ADRs, domain model, API contract, repo structure | ✅ |
+| 1 | ASP.NET Core API + PostgreSQL + EF Core foundation | ✅ |
+| 2 | FastAPI AI service + Gemini provider abstraction | ✅ |
+| 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ✅ |
+| 4 | Change intelligence: Roslyn + dependency graph + change-risk pipeline | ✅ |
+| 5 | Incident investigation + async analysis jobs (202 + poll) | ✅ |
+| 6 | React UI — dashboard, incident investigation, change risk | ✅ |
+| 7 | Evaluation + AI observability (runner, trace, retrieval explorer) | ✅ |
+| 8 | Controlled AI tools + tool tracing (registry, loop, audit, trace UI) | ✅ |
+| 9 | Production hardening + deployment readiness (Docker, CI, security) | ✅ |
+| 10 | AWS deployment (optional, only after local is stable) | ⏳ |

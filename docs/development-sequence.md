@@ -50,20 +50,15 @@
 
 **Exit verified 2026-08-15:** 187 .NET unit + 53 .NET integration + 157 Python unit + 12 Python DB + 34 frontend tests green; evaluation tools block: 20/20 cases, 40/40 proposals valid, 20/20 loop completed, 20/20 grounding after tools (mock provider).
 
-## Phase 9 — Security Hardening + Ops Observability
-**Goal:** production-grade controls on top of the Phase 7 trace.
-**Deliverables:** AI run trace view extensions (tool calls, tokens, cost); structured logging review; rate limiting; audit-log UI; guardrail pass on all LLM paths; secrets hygiene pass.
-**Exit:** any analysis is fully explainable from the trace view; red-team pass on prompt-injection scenarios documented.
+## Phase 9 — Production Hardening + Deployment Readiness ✅
+**Goal:** make the product reproducible, containerized, configurable, secure-by-default, observable, CI-tested, and portfolio-ready — without new AI capabilities.
+**Deliverables:** full four-service compose (frontend/backend/ai-service/postgres) — frontend multi-stage React→`nginx-unprivileged` container that serves the SPA and proxies `/api/` to the backend (same-origin, no CORS in production); `backend/.dockerignore` + `frontend/.dockerignore`; controlled CORS (`Cors:AllowedOrigins`, semicolon list, never `*`; dev default localhost:5173); in-memory rate limiting on analysis submission (`RateLimit:AnalysisPermitLimit/Window` — single-instance, documented); non-dev fail-fast validation of JWT signing key, AI internal key, and DB connection string; DB-gated backend healthcheck (`/api/v1/health`); GitHub Actions CI at $0 (backend build + unit + PostgreSQL integration via service container, Python unit + DB integration, frontend build + tests, deterministic evaluation runner with seeded mock-embedded corpus, secret-scan job — zero Gemini, no API keys); per-case tool trace in the evaluation report (`toolCallsProposed/Executed/Rejected/Failed`, `toolCallCount`, `loopCompleted`, `groundingAfterTools`); docs: [costs.md](costs.md), [demo-script.md](demo-script.md), security-model production checklist (§8), deployment-strategy, docker/README, README portfolio rewrite, .env.example updates (CORS/rate-limit/frontend-port vars).
+**Exit:** all suites green with real counts (187 .NET unit + 53 .NET integration + 157 Python unit + 12 Python DB + 34 frontend tests); evaluation runner produces the report with per-case tool metrics; frontend production build green; CI workflow YAML valid; **Docker itself not runnable in this environment — compose is statically validated and `docker compose up --build` is an explicit follow-up on a Docker-equipped machine**; zero Gemini calls; no secrets committed — verified 2026-08-15.
 
-## Phase 10 — Docker + CI/CD
-**Goal:** `docker compose up` for everyone.
-**Deliverables:** four-service compose (frontend/backend/ai-service/postgres) with healthchecks + volumes + non-root; GitHub Actions: lint → unit → integration → security scan → AI evaluation (regression gate) → docker build; README quick-start.
-**Exit:** clean machine + `docker compose up` = working demo with seeded data; CI green.
-
-## Phase 11 — AWS (only when local is stable)
+## Phase 10 — AWS (only when local is stable)
 **Goal:** modular, cost-estimated deployment.
 **Deliverables:** Terraform modules per service; cost estimate reviewed before provisioning; S3/CloudFront frontend; Fargate backend + AI service; managed PostgreSQL decision; SQS optional; Secrets Manager; Cognito seam; CloudWatch; architecture diagrams updated; known-limitations doc extended.
-**Exit:** deployed demo meets the cost estimate agreed in advance; local remains the source of truth.
+**Exit:** deployed demo meets the cost estimate agreed in advance; local remains the source of truth. Nothing in Phases 1–9 requires AWS.
 
 ## Sequencing notes
 - **Phase 1 and 2 can be built in parallel** (different repos, contract agreed in Phase 0) — this is the only planned parallelism; it shrinks the first milestone.

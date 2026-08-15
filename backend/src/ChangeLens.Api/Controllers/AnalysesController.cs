@@ -2,6 +2,7 @@ using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ChangeLens.Api.Controllers;
 
@@ -81,6 +82,7 @@ public sealed class AnalysesController(
     /// 202 + poll job pattern from the API contract.
     /// </summary>
     [HttpPost("change-risk")]
+    [EnableRateLimiting("analysis")]
     [ProducesResponseType<ChangeRiskAnalysisResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]

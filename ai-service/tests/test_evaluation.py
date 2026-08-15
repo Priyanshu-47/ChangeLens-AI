@@ -300,6 +300,11 @@ def test_tool_loop_metrics_recorded(fake_retrieval):
     assert result.tools.status == "evaluated"
     assert result.tools.proposals >= 2
     assert result.tools.proposals_valid == result.tools.proposals
+    # Phase 9 per-case tool trace: every call is counted; rejected/failed are
+    # structural zeros at the AI-service boundary (Python never executes tools).
+    assert result.tools.tool_call_count == result.tools.proposals
+    assert result.tools.rejected == 0
+    assert result.tools.failed == 0
     assert result.tools.loop_completed is True
     assert result.tools.grounding_after_tools is True
     assert "get_dependency_paths" in result.tools.tool_names
@@ -309,8 +314,16 @@ def test_tool_loop_metrics_recorded(fake_retrieval):
     tools = report["summary"]["tools"]
     assert tools["evaluated"] == 1
     assert tools["proposalValidity"] == 1.0
+    assert tools["toolCalls"] == result.tools.proposals
+    assert tools["rejected"] == 0
+    assert tools["failed"] == 0
     assert tools["loopCompleted"] == 1
     assert tools["groundingAfterTools"] == 1
+    # Per-case tool trace is serialized into the report's cases section.
+    case_tools = report["cases"][0]["tools"]
+    assert case_tools["tool_call_count"] == result.tools.proposals
+    assert case_tools["rejected"] == 0
+    assert case_tools["loop_completed"] is True
 
 
 def test_analysis_response_includes_retrieval_trace(fake_retrieval):

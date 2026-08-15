@@ -186,6 +186,26 @@ def _render_markdown(report: dict) -> str:
             f"- Evidence coverage (gold sources cited): {coverage_text}",
             "",
         ]
+
+    tools = summary["tools"]
+    if tools.get("evaluated"):
+        lines += [
+            "## Tool loop (mock provider, AI-service boundary)",
+            "",
+            f"- Cases: **{tools['evaluated']}**",
+            f"- Proposals: {tools['proposals']} (valid {tools['proposalsValid']}, "
+            f"validity {tools['proposalValidity']:.3f})",
+            f"- Tool calls: {tools['toolCalls']} · rejected {tools['rejected']} · failed {tools['failed']}",
+            f"- Loops completed: **{tools['loopCompleted']}/{tools['evaluated']}**",
+            f"- Grounding after tools: **{tools['groundingAfterTools']}/{tools['evaluated']}**",
+            f"- Tools used: {', '.join(tools['toolsUsed']) or '—'}",
+            "",
+            "> Per-case tool trace (toolCallsProposed/Executed/Rejected/Failed, toolCallCount,",
+            "> loopCompleted, groundingAfterTools) is recorded in evaluation-report.json §cases.",
+            "> Rejected/failed are structural zeros at the AI-service boundary — Python never",
+            "> executes tools; .NET integration tests cover authorization and rejection.",
+            "",
+        ]
     return "\n".join(lines) + "\n"
 
 

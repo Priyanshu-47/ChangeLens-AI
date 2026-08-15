@@ -1,6 +1,6 @@
 # Security Model
 
-> Phase 0 deliverable (updated Phase 5). Threat focus, authentication, authorization, prompt-injection defense, secrets, validation, and audit. **Phase 1 implements:** Identity + JWT, RBAC + project-level authorization (404 for invisible projects, 403 for insufficient roles, global-Admin bypass), DataAnnotations + service validation, payload limits, uniform ProblemDetails errors, and an append-only audit trail (auth events + mutations). **Phase 5 adds:** async analysis authorization (submit = Write, poll = Read), cross-project isolation for analyses, safe job failure states, and analysis lifecycle audit events. Deferred to later phases: rate limiting (9), prompt-injection guardrails (2/9), mTLS between services (11), external IdP (11).
+> Phase 0 deliverable (updated Phase 9). Threat focus, authentication, authorization, prompt-injection defense, secrets, validation, audit, and a production checklist. **Phase 1 implements:** Identity + JWT, RBAC + project-level authorization (404 for invisible projects, 403 for insufficient roles, global-Admin bypass), DataAnnotations + service validation, payload limits, uniform ProblemDetails errors, and an append-only audit trail (auth events + mutations). **Phase 5 adds:** async analysis authorization (submit = Write, poll = Read), cross-project isolation for analyses, safe job failure states, and analysis lifecycle audit events. **Phase 9 adds:** controlled CORS (no wildcards), in-memory rate limiting on analysis submission, non-dev fail-fast validation of JWT / AI key / DB connection string, and the production checklist in §8. Deferred to later phases: mTLS between services (11), external IdP (11).
 
 ## 1. Threat focus (what this system must defend)
 
@@ -79,7 +79,22 @@ Append-only `audit_logs` records for: authentication events, all mutating operat
 
 Async analysis lifecycle (Phase 5) is audited as: `AnalysisRequested` (submit), `AnalysisStarted`, `AnalysisCompleted`, `AnalysisFailed` (worker). Details carry the analysis/incident ids, model, prompt version, validation status, latency, candidate/evidence counts (completed) or the safe failure code + message (failed) — never secrets, raw prompts, or stack traces.
 
-## 8. What is deliberately deferred (documented, not forgotten)
+## 8. Production checklist (Phase 9 hardening)
+
+Before any shared deployment (not local dev):
+
+- [ ] **Secrets**: `GEMINI_API_KEY`, `JWT__SIGNING_KEY`, `INTERNAL_API_KEY`, and the DB password come from a secrets manager / platform secrets — never `.env`, never the repo. The backend fails fast on the dev placeholders (`dev-only-…`, `change-me-…`) outside `Development`, and the AI service requires `GEMINI_API_KEY` when `AI_PROVIDER=gemini`.
+- [ ] **JWT**: real random HS256 signing key (≥ 256 bits), explicit issuer/audience, sane expiry, clock skew ≤ 1 min. No `dev-only` key anywhere in non-dev config.
+- [ ] **CORS**: `Cors__AllowedOrigins` set to the exact SPA origin(s) — never `*`. The compose nginx proxy makes the production SPA same-origin, so CORS is usually empty.
+- [ ] **AI boundary**: the FastAPI service is not publicly reachable (remove the dev `ports:` mapping in compose); only the backend calls it, over the internal network with `INTERNAL_API_KEY` + contract version header. mTLS remains a Phase 10+ hardening option.
+- [ ] **Rate limiting**: analysis submission is limited in-memory (permit/window configurable via `RateLimit__*`). Documented as single-instance — a multi-instance deployment must move to a shared store.
+- [ ] **HTTPS/TLS**: enforced at the edge (reverse proxy / platform TLS); local dev HTTP is fine inside compose.
+- [ ] **Database**: non-default password, least-privilege role, network-restricted, TLS where supported.
+- [ ] **Logging**: structured JSON with correlation/analysis/tool ids; no secrets, JWT, or authorization headers logged (redaction is built into the structured logger).
+- [ ] **Health/readiness**: never call Gemini (probe off by default); `/api/v1/health` includes the DB check and gates compose startup.
+- [ ] **Secrets scan**: the CI `secret-scan` job greps for credential-shaped material; run it before any push.
+
+## 9. What is deliberately deferred (documented, not forgotten)
 
 - mTLS between backend and AI service (Phase 11 AWS hardening; compose network + shared key in MVP).
 - External IdP / SSO (Cognito/Entra) — Phase 10 note.
