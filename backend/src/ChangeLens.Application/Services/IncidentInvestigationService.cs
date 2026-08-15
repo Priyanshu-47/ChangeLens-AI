@@ -233,6 +233,7 @@ public sealed class IncidentInvestigationService(
             TraceSchemaVersion = run.TraceSchemaVersion,
             Stages = stored?.Stages ?? [],
             Retrieval = stored?.Retrieval,
+            ToolCalls = stored?.ToolCalls ?? [],
             FailureCode = run.FailureCode,
             FailureCategory = run.FailureCode is null ? null : AnalysisFailureCategory.For(run.FailureCode)
         };

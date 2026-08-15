@@ -180,12 +180,25 @@ It forces `AI_PROVIDER=mock` / `EMBEDDING_PROVIDER=mock` — **zero Gemini calls
 key**. Reports land in gitignored `data/evaluation-output/` (`evaluation-report.json` +
 `.md`); `--baseline <previous report>` prints regression deltas. Analysis responses also
 carry a `trace` block (queries, candidate/selected counts, per-item leg attribution) that
-the backend persists for the trace endpoint.
+the backend persists for the trace endpoint. Since Phase 8 the report includes a `tools`
+block: proposal validity, deterministic loop completion, and grounding after tool results
+(measured with the mock provider; authorization/rejection are .NET integration concerns).
 
-## Known limitations (Phase 7)
+## Tool loop (Phase 8)
+
+`POST /internal/v1/analysis/incident` supports the tool loop when the backend sends a
+`toolCatalog`: each call returns one turn — `{ "kind": "tool_call", "toolCall": … }` or
+`{ "kind": "final", "result": … }` (see docs/agent-tools.md). The AI service **never
+executes tools**: it renders the catalog + `toolResults` as untrusted DATA, parses
+proposals, and validates the turn (`kind=final` must be grounded). `MockAIProvider`
+deterministically proposes `get_dependency_paths` → `get_runbook` → final so the loop is
+testable without Gemini.
+
+## Known limitations (Phase 8)
 
 - **No reranker** — intentionally not implemented (MVP = RRF; revisit only if evaluation shows RRF insufficient, docs/rag-architecture.md §4).
-- **Gemini structured-output gap** — the real text provider returns HTTP 400 for the current `responseSchema` shapes (the `api_safe_schema` normalizer fixed `$ref`/`$defs`/`enum` for the flash model, but `gemini-3.1-flash-lite` rejects the schema shape; the same applies to the new incident schema). Phase 5+ tests use `MockAIProvider`; live Gemini text calls are quota-gated and NOT claimed to work until resolved.
+- **Gemini structured-output gap** — the real text provider returns HTTP 400 for the current `responseSchema` shapes (the `api_safe_schema` normalizer fixed `$ref`/`$defs`/`enum` for the flash model, but `gemini-3.1-flash-lite` rejects the schema shape; the same applies to the incident + tool-turn schemas). Phase 5+ tests use `MockAIProvider`; live Gemini text calls are quota-gated and NOT claimed to work until resolved.
+- **Tool loop is mock-verified** — the deterministic `MockAIProvider` scripted plan (dependency paths → runbook → final) exercises the loop; live tool proposals depend on resolving the Gemini schema issue.
 - **Measured numbers are synthetic-corpus/mock-embedding results** — they prove the framework, not production accuracy; no live accuracy claims until a real-provider eval pass.
 - **Incident retrieval queries are heuristic** — title + symptoms + service + symbol-like terms; selected-evidence leg attribution is traced (Phase 7), full per-leg candidate lists only in evaluation runs.
 - **Structured incident fields, OpenAPI/JSON/YAML chunkers, identifier-aware tokenizer** for the keyword leg — deferred; unknown document types fall back to heading sections / one file chunk today.

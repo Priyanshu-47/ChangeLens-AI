@@ -89,6 +89,25 @@ class AiCaseResult:
 
 
 @dataclass
+class ToolsCaseResult:
+    """Phase 8 tool-loop measurement at the AI-service boundary (docs/agent-tools.md §9).
+
+    Python never executes tools, so this measures what the AI service CAN prove:
+    proposal validity (name in the catalog), deterministic loop completion, and
+    grounding of the final result after tool results were fed back. Tool
+    authorization and rejection are .NET behaviors covered by integration tests.
+    """
+
+    status: str = "skipped"  # "evaluated" | "skipped"
+    skipped_reason: str | None = None
+    proposals: int = 0
+    proposals_valid: int = 0
+    loop_completed: bool | None = None
+    grounding_after_tools: bool | None = None
+    tool_names: list[str] = field(default_factory=list)
+
+
+@dataclass
 class CaseResult:
     case_id: str
     workflow: str
@@ -99,6 +118,7 @@ class CaseResult:
     latency_ms: int
     legs: dict[str, LegCaseResult] = field(default_factory=dict)
     ai: AiCaseResult = field(default_factory=AiCaseResult)
+    tools: ToolsCaseResult = field(default_factory=ToolsCaseResult)
     error: str | None = None
 
 
@@ -177,9 +197,12 @@ class EvaluationRunner:
 
         if self._ai_pipeline and result.error is None:
             result.ai = self._evaluate_ai(case)
+            result.tools = self._evaluate_tools(case)
         elif not self._ai_pipeline:
             result.ai.status = "skipped"
             result.ai.skipped_reason = "ai_pipeline disabled"
+            result.tools.status = "skipped"
+            result.tools.skipped_reason = "ai_pipeline disabled"
         return result
 
     def _evaluate_leg(
@@ -310,6 +333,130 @@ class EvaluationRunner:
             queries=list(trace.queries) if trace is not None else [],
         )
 
+    def _evaluate_tools(self, case: GoldenCase) -> ToolsCaseResult:
+        """Deterministic mock tool loop (docs/agent-tools.md §9).
+
+        Drives the incident analysis through the three mock turns (propose dependency
+        paths -> propose runbook -> final) with the allowlist catalog, feeding the
+        deterministic tool outputs back between turns, and records proposal validity,
+        loop completion, and grounding of the final result. Zero Gemini calls.
+        """
+        if self._analysis is None:
+            return ToolsCaseResult(status="skipped", skipped_reason="analysis service not provided")
+
+        from ..models.requests import (
+            IncidentAnalysisRequest,
+            IncidentContextItem,
+            ToolDefinition,
+            ToolResultItem,
+        )
+
+        catalog = [
+            ToolDefinition(name="get_incident", description="Incident record", input_schema={}),
+            ToolDefinition(name="get_incident_timeline", description="Chronological events", input_schema={}),
+            ToolDefinition(name="get_service", description="Service record", input_schema={}),
+            ToolDefinition(name="get_runbook", description="Runbook retrieval", input_schema={}),
+            ToolDefinition(name="get_source_symbol", description="Source retrieval", input_schema={}),
+            ToolDefinition(name="get_dependency_paths", description="Dependency graph traversal", input_schema={}),
+            ToolDefinition(name="search_evidence", description="Hybrid retrieval", input_schema={}),
+        ]
+        names = {t.name for t in catalog}
+
+        def request_with(results: list[ToolResultItem]) -> IncidentAnalysisRequest:
+            return IncidentAnalysisRequest(
+                project_id=self._project_id,
+                analysis_id="eval-tools",
+                incident=IncidentContextItem(
+                    title=case.query,
+                    severity="Sev1",
+                    status="Open",
+                    symptoms=[case.query],
+                ),
+                tool_catalog=catalog,
+                tool_results=results,
+            )
+
+        import asyncio
+        import json as _json
+
+        results: list[ToolResultItem] = []
+        names_seen: list[str] = []
+        proposals = 0
+        proposals_valid = 0
+
+        try:
+            turn1 = asyncio.run(self._analysis.analyze_incident(request_with(results)))  # type: ignore[attr-defined]
+            if turn1.kind != "tool_call" or turn1.tool_call is None:
+                return ToolsCaseResult(
+                    status="evaluated", proposals=0, proposals_valid=0,
+                    loop_completed=False, grounding_after_tools=False,
+                )
+            proposals += 1
+            proposals_valid += int(turn1.tool_call.name in names)
+            names_seen.append(turn1.tool_call.name)
+            results.append(
+                ToolResultItem(
+                    tool_call_id=turn1.tool_call.id,
+                    tool_name=turn1.tool_call.name,
+                    status="executed",
+                    output=_json.dumps(
+                        {
+                            "symbol": turn1.tool_call.arguments.get("symbol", "TokenService"),
+                            "evidenceIds": [
+                                "dependency:AcmePay.Auth.TokenService -> AcmePay.Program"
+                            ],
+                            "paths": [],
+                        }
+                    ),
+                )
+            )
+
+            turn2 = asyncio.run(self._analysis.analyze_incident(request_with(results)))  # type: ignore[attr-defined]
+            if turn2.kind != "tool_call" or turn2.tool_call is None:
+                return ToolsCaseResult(
+                    status="evaluated", proposals=proposals,
+                    proposals_valid=proposals_valid, loop_completed=False,
+                    grounding_after_tools=False, tool_names=names_seen,
+                )
+            proposals += 1
+            proposals_valid += int(turn2.tool_call.name in names)
+            names_seen.append(turn2.tool_call.name)
+            results.append(
+                ToolResultItem(
+                    tool_call_id=turn2.tool_call.id,
+                    tool_name=turn2.tool_call.name,
+                    status="executed",
+                    output=_json.dumps(
+                        {
+                            "query": case.query,
+                            "evidenceIds": ["chunk:eval-runbook-1"],
+                            "items": [{"id": "chunk:eval-runbook-1", "content": "Rotate keys."}],
+                        }
+                    ),
+                )
+            )
+
+            turn3 = asyncio.run(self._analysis.analyze_incident(request_with(results)))  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — record per-case skip, keep the run alive
+            return ToolsCaseResult(
+                status="skipped", skipped_reason=f"tool loop raised {type(exc).__name__}: {exc}",
+            )
+
+        loop_completed = turn3.kind == "final" and turn3.result is not None
+        grounding = (
+            turn3.usage.validation_status in ("valid", "repaired")
+            if turn3.kind == "final"
+            else False
+        )
+        return ToolsCaseResult(
+            status="evaluated",
+            proposals=proposals,
+            proposals_valid=proposals_valid,
+            loop_completed=loop_completed,
+            grounding_after_tools=grounding,
+            tool_names=names_seen,
+        )
+
     def _search(self, request: RetrievalSearchRequest) -> RetrievalSearchResponse:
         return self._retrieval.search(request)  # type: ignore[attr-defined]
 
@@ -355,6 +502,22 @@ class EvaluationRunner:
             "latencyMsAverage": average(a.latency_ms or 0 for a in ai_evaluated),
         }
 
+        tools_evaluated = [c.tools for c in evaluated if c.tools.status == "evaluated"]
+        tools = {
+            "evaluated": len(tools_evaluated),
+            "proposals": sum(t.proposals for t in tools_evaluated),
+            "proposalsValid": sum(t.proposals_valid for t in tools_evaluated),
+            "proposalValidity": fraction(
+                sum(t.proposals_valid for t in tools_evaluated),
+                sum(t.proposals for t in tools_evaluated),
+            ),
+            "loopCompleted": sum(1 for t in tools_evaluated if t.loop_completed),
+            "groundingAfterTools": sum(1 for t in tools_evaluated if t.grounding_after_tools),
+            "toolsUsed": sorted(
+                {name for t in tools_evaluated for name in t.tool_names}
+            ),
+        }
+
         skipped = [c for c in case_results if c.error is not None]
         return {
             "casesTotal": len(case_results),
@@ -362,6 +525,7 @@ class EvaluationRunner:
             "casesFailed": len(skipped),
             "legs": legs,
             "ai": ai,
+            "tools": tools,
         }
 
     def build_report(

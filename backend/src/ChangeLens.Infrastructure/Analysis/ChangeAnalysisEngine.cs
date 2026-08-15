@@ -77,6 +77,96 @@ public sealed class ChangeAnalysisEngine(
         };
     }
 
+    public SymbolDependencyPathsDto FindDependencyPaths(string symbol, int maxDepth)
+    {
+        // The repository is server configuration, not user input (GitChangeSource
+        // validates it inside the allowed root). Traversal is bounded: the tool caps
+        // maxDepth, and the engine re-caps defensively against config drift.
+        var resolution = changeSource.ResolveChange(Array.Empty<ChangedFileRequest>(), null, null);
+        var targetFiles = ReadTargetState(resolution.RepositoryPath, resolution.Files);
+        var analysis = analyzer.Analyze(targetFiles);
+        var graph = analysis.Graph;
+
+        var resolvedId = ResolveSymbolId(graph, symbol);
+        if (resolvedId is null)
+        {
+            return new SymbolDependencyPathsDto
+            {
+                Warnings = [$"No symbol matching '{symbol}' was found in the repository graph."]
+            };
+        }
+
+        var depth = Math.Clamp(maxDepth, 1, 4);
+        var seen = new HashSet<string>(StringComparer.Ordinal) { resolvedId };
+        var reachable = new HashSet<string>(StringComparer.Ordinal) { resolvedId };
+        var frontier = new List<string> { resolvedId };
+        for (var level = 0; level < depth && frontier.Count > 0; level++)
+        {
+            var next = new List<string>();
+            foreach (var current in frontier)
+            {
+                foreach (var dependent in graph.GetDirectDependents(current))
+                {
+                    if (seen.Add(dependent.SymbolId))
+                    {
+                        reachable.Add(dependent.SymbolId);
+                        next.Add(dependent.SymbolId);
+                    }
+                }
+
+                foreach (var dependency in graph.GetDirectDependencies(current))
+                {
+                    if (seen.Add(dependency.SymbolId))
+                    {
+                        reachable.Add(dependency.SymbolId);
+                        next.Add(dependency.SymbolId);
+                    }
+                }
+            }
+
+            frontier = next;
+        }
+
+        var paths = graph.Edges
+            .Where(e => reachable.Contains(e.FromSymbolId) && reachable.Contains(e.ToSymbolId))
+            .OrderBy(e => e.FromSymbolId, StringComparer.Ordinal)
+            .ThenBy(e => e.ToSymbolId, StringComparer.Ordinal)
+            .Select(e => new SymbolDependencyPathDto
+            {
+                From = e.FromSymbolId,
+                To = e.ToSymbolId,
+                EdgeType = e.Type.ToString().ToUpperInvariant(),
+                FilePath = e.FilePath
+            })
+            .ToList();
+
+        return new SymbolDependencyPathsDto
+        {
+            ResolvedSymbol = resolvedId,
+            Paths = paths,
+            Warnings = analysis.Warnings.Take(5).ToList()
+        };
+    }
+
+    /// <summary>Resolve a tool-supplied symbol: exact id, exact name, or unique name suffix.</summary>
+    private static string? ResolveSymbolId(DependencyGraph graph, string symbol)
+    {
+        if (graph.Nodes.ContainsKey(symbol))
+        {
+            return symbol;
+        }
+
+        var candidates = graph.Nodes.Values
+            .Where(s => s.Name.Equals(symbol, StringComparison.Ordinal)
+                        || s.SymbolId.EndsWith("." + symbol, StringComparison.Ordinal)
+                        || s.SymbolId.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+            .Select(s => s.SymbolId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return candidates.Count == 1 ? candidates[0] : null;
+    }
+
     private List<SourceFile> ReadTargetState(string repoDir, IReadOnlyList<ResolvedChangeFile> resolved)
     {
         var files = new Dictionary<string, string>(StringComparer.Ordinal);

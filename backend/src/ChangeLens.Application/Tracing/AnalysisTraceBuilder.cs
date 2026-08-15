@@ -15,11 +15,14 @@ public sealed class AnalysisTraceBuilder
     private const string SchemaVersion = "trace-v1";
 
     private readonly List<AnalysisStageDto> _stages = [];
+    private readonly List<ToolCallTraceDto> _toolCalls = [];
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
     private string? _failureCategory;
     private string? _failureCode;
 
     public IReadOnlyList<AnalysisStageDto> Stages => _stages;
+
+    public IReadOnlyList<ToolCallTraceDto> ToolCalls => _toolCalls;
 
     public string? FailureCategory => _failureCategory;
 
@@ -38,6 +41,28 @@ public sealed class AnalysisTraceBuilder
 
     /// <summary>Attaches the AI service's retrieval/evidence-selection trace.</summary>
     public void SetRetrieval(RetrievalTraceDto? retrieval) => Retrieval = retrieval;
+
+    /// <summary>Records one tool call (Phase 8). Args are a truncated identifier-only summary.</summary>
+    public void AddToolCall(
+        string toolCallId,
+        string toolName,
+        string status,
+        long? durationMs,
+        string? arguments,
+        string? errorCode,
+        int? evidenceIdCount)
+    {
+        _toolCalls.Add(new ToolCallTraceDto
+        {
+            ToolCallId = toolCallId,
+            ToolName = toolName,
+            Status = status,
+            DurationMs = durationMs,
+            Arguments = arguments,
+            ErrorCode = errorCode,
+            EvidenceIdCount = evidenceIdCount
+        });
+    }
 
     /// <summary>Marks the most recent stage Failed and records the normalized category.</summary>
     public void Fail(string failureCode, string message)
@@ -64,6 +89,7 @@ public sealed class AnalysisTraceBuilder
             totalDurationMs = _stopwatch.ElapsedMilliseconds,
             stages = _stages,
             retrieval = Retrieval,
+            toolCalls = _toolCalls,
             failure = _failureCode is null
                 ? null
                 : new { code = _failureCode, category = _failureCategory }

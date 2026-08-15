@@ -29,6 +29,7 @@ public static class AnalysisFailureCode
     public const string JobTimeout = "JOB_TIMEOUT";
     public const string QueueFull = "QUEUE_FULL";
     public const string WorkerInterrupted = "WORKER_INTERRUPTED";
+    public const string ToolCallLimitExceeded = "TOOL_CALL_LIMIT_EXCEEDED";
     public const string Internal = "INTERNAL";
 }
 

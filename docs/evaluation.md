@@ -125,11 +125,37 @@ Exposed via `GET /api/v1/analyses/{analysisId}/trace` (authorization identical t
 analysis: Read; non-members see 404). Raw prompts, tokens, JWTs and secrets are never
 stored.
 
+### 5.1 Tool calls (Phase 8, [docs/agent-tools.md](agent-tools.md))
+
+The trace also records every tool call: `toolCallId`, `toolName`, status
+(Proposed / Executed / Rejected / Failed), real duration, a truncated argument summary,
+error code, and evidence-id count. These answer "why did the model fetch this evidence
+and was it authorized?" without storing raw payloads.
+
+### 5.2 Tool-loop metrics (measured by the runner, AI-service boundary)
+
+The evaluation report's `summary.tools` block measures what the AI service can prove
+with the deterministic mock provider — Python never executes tools, so authorization
+and rejection are covered by .NET integration tests instead:
+
+| Metric | Definition |
+| --- | --- |
+| `proposals` / `proposalsValid` | tool proposals made / whose name is in the allowlist catalog (proposal validity) |
+| `loopCompleted` | cases where the deterministic loop reached a final result |
+| `groundingAfterTools` | cases where the final result passed grounding after tool results were fed back |
+| `toolsUsed` | distinct tools proposed (deterministic mock: `get_dependency_paths`, `get_runbook`) |
+
+Phase 8 measured results (mock provider, synthetic corpus, 2026-08-15): 20/20 cases
+loop-completed, 40/40 proposals valid, 20/20 grounded after tools. Tool authorization
+success/rejection rates are not derivable in Python — they are asserted by integration
+tests (unknown tool → `TOOL_NOT_ALLOWED`, cross-project → `NOT_FOUND`, max calls →
+`TOOL_CALL_LIMIT_EXCEEDED`).
+
 ## 6. Error categories
 
 | Category | Failure codes |
 | --- | --- |
-| VALIDATION | `AI_VALIDATION_FAILED` |
+| VALIDATION | `AI_VALIDATION_FAILED`, `TOOL_CALL_LIMIT_EXCEEDED` (Phase 8) |
 | RATE_LIMIT | `LLM_RATE_LIMITED` |
 | TIMEOUT | `AI_TIMEOUT`, `JOB_TIMEOUT` |
 | AI_PROVIDER | `AI_UNAVAILABLE` |

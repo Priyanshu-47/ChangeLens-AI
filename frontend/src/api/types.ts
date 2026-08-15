@@ -212,8 +212,23 @@ export interface AnalysisTrace {
   traceSchemaVersion: string | null;
   stages: AnalysisStage[];
   retrieval: RetrievalTrace | null;
+  toolCalls: ToolCallTrace[];
   failureCode: string | null;
   failureCategory: string | null;
+}
+
+/**
+ * One tool call recorded in the analysis trace (Phase 8, docs/agent-tools.md).
+ * Status: Proposed | Validated | Executed | Rejected | Failed. Durations are real.
+ */
+export interface ToolCallTrace {
+  toolCallId: string;
+  toolName: string;
+  status: 'Proposed' | 'Validated' | 'Executed' | 'Rejected' | 'Failed';
+  durationMs: number | null;
+  arguments: string | null;
+  errorCode: string | null;
+  evidenceIdCount: number | null;
 }
 
 // ── Change-risk result (Workflow A) ─────────────────────────────────────

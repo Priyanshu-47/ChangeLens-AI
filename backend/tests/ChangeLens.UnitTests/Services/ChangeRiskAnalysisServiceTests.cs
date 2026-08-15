@@ -179,6 +179,10 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
         public Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
             IncidentAnalysisRequestDto request, CancellationToken ct)
             => throw new NotSupportedException("Not used in change-risk tests.");
+
+        public Task<RetrievalSearchResponseDto> RetrievalSearchAsync(
+            RetrievalSearchRequestDto request, CancellationToken ct)
+            => throw new NotSupportedException("Not used in change-risk tests.");
     }
 
     private sealed class FakeChangeEngine : IChangeAnalysisEngine
@@ -220,5 +224,8 @@ public sealed class ChangeRiskAnalysisServiceTests : ServiceTestBase
                 Warnings = []
             };
         }
+
+        public SymbolDependencyPathsDto FindDependencyPaths(string symbol, int maxDepth)
+            => new() { ResolvedSymbol = null, Paths = [], Warnings = [] };
     }
 }

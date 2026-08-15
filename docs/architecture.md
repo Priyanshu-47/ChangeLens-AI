@@ -88,19 +88,28 @@ sequenceDiagram
     A->>W: Enqueue job (bounded Channel, concurrency = Analysis:MaxConcurrency)
     A-->>U: 202 Accepted { analysisId, status: Queued, statusUrl }
     W->>W: Queued → Running; audit AnalysisStarted
-    W->>AI: POST /internal/v1/analysis/incident (normalized context; AI discovers evidence)
-    AI->>AI: Retrieval queries from context (title, symptoms, service, symbol-like terms)
-    AI->>P: Hybrid retrieval: vector + keyword + metadata + dependency → RRF, project-scoped
-    AI->>G: generateContent(responseSchema=InvestigationSchema)
-    G-->>AI: JSON candidate
-    AI->>AI: Pydantic validation + grounding (every candidate cites a real evidence id) → safe failure
-    AI-->>W: Validated rootCauseCandidates[] + remediation + unknowns + usage
-    W->>P: Running → Succeeded; persist result JSONB, model, prompt version, timestamps; audit AnalysisCompleted
+    loop Phase 8 tool loop (AI proposes; .NET executes)
+        W->>AI: POST /internal/v1/analysis/incident (context + tool catalog + tool results)
+        AI->>AI: Hybrid retrieval from context (vector + keyword + dependency → RRF, project-scoped)
+        AI->>AI: Parse turn (kind=tool_call | final) + validate/ground
+        alt tool proposal
+            AI-->>W: tool_call { id, name, arguments }
+            W->>W: Registry lookup → argument validation → project authorization
+            W->>W: Execute read-only tool (bounded timeout) → sanitized result + evidenceIds
+            W->>P: Audit ToolExecuted/ToolRejected; record toolCalls on the trace
+            W-->>AI: tool result fed back as untrusted DATA
+        else final turn
+            AI-->>W: Validated rootCauseCandidates[] + remediation + unknowns + usage
+        end
+    end
+    W->>P: Running → Succeeded; persist result JSONB, model, prompt version, timestamps, tool trace; audit AnalysisCompleted
     U->>A: GET /api/v1/analyses/{id} (poll)
     A-->>U: 200 { status: Succeeded, result, model, promptVersion, timestamps }
+    U->>A: GET /api/v1/analyses/{id}/trace
+    A-->>U: 200 { stages, retrieval, toolCalls }
 ```
 
-Both workflows share the same backbone: **deterministic preprocessing in .NET → hybrid retrieval in the AI service → one structured LLM call over an evidence package → schema validation → persistence with evidence links and full AI-run metadata.**
+Both workflows share the same backbone: **deterministic preprocessing in .NET → hybrid retrieval in the AI service → structured LLM call(s) over an evidence package (bounded tool loop in Workflow B) → schema validation → persistence with evidence links and full AI-run metadata.**
 
 ### Frontend (Phase 6)
 
@@ -125,11 +134,11 @@ Full request/response schemas: [docs/ai-service-boundary.md](ai-service-boundary
 
 **Evaluation** runs as a deterministic local CLI (`python -m app.evaluation.run`, docs/evaluation.md) over the versioned 20-case golden dataset (`v1`): per-leg ablation (vector / keyword / dependency / hybrid) with Recall@K / Precision@K / MRR / Hit Rate, mechanical grounding + schema checks through the mock-AI pipeline, and JSON+Markdown reports under gitignored `data/evaluation-output/`. It forces mock providers — zero Gemini, no API key. Regression comparison uses a JSON baseline (`--baseline`); deltas are informational until thresholds are justified by data.
 
-**Traceability** is per-analysis, not per-batch: every run persists `analysis_runs.TraceJson` (schema `trace-v1`) — real per-stage timings plus the AI service's retrieval trace (queries, candidate vs selected counts, budgets, and per-item vector/keyword/dependency attribution, which are non-comparable signals shown separately). `GET /api/v1/analyses/{id}/trace` exposes it with the same authorization as the analysis. Failure codes map to normalized categories (VALIDATION / RATE_LIMIT / TIMEOUT / AI_PROVIDER / INTERNAL). No prompts, tokens, or secrets are stored. The React Analysis page renders a lazy-loaded Trace panel with a retrieval explorer.
+**Traceability** is per-analysis, not per-batch: every run persists `analysis_runs.TraceJson` (schema `trace-v1`) — real per-stage timings, the AI service's retrieval trace (queries, candidate vs selected counts, budgets, and per-item vector/keyword/dependency attribution, which are non-comparable signals shown separately), and (Phase 8) per-tool-call records (toolCallId, name, status, duration, argument summary, error code, evidence-id count). `GET /api/v1/analyses/{id}/trace` exposes it with the same authorization as the analysis. Failure codes map to normalized categories (VALIDATION / RATE_LIMIT / TIMEOUT / AI_PROVIDER / INTERNAL). No prompts, tokens, or secrets are stored. The React Analysis page renders a lazy-loaded Trace panel with a retrieval explorer and a Tools-used list.
 
 ### Where orchestration lives
 
-The **ASP.NET Core API orchestrates both workflows**. The AI service is a *capability provider*: it never decides which change to analyze, never stores business entities, and never calls tools on its own. Tool definitions (Phase 7) live in .NET; the AI service proposes tool calls, .NET validates, authorizes, executes, and audits them. See [ADR-0002](adr/0002-service-boundary.md) and [ADR-0008](adr/0008-controlled-tool-use.md).
+The **ASP.NET Core API orchestrates both workflows**. The AI service is a *capability provider*: it never decides which change to analyze, never stores business entities, and never calls tools on its own. Tool definitions (Phase 8) live in .NET behind a registry allowlist; the AI service proposes tool calls (`kind: tool_call`), .NET validates, authorizes, executes, and audits them, and feeds sanitized results back as untrusted data. See [ADR-0002](adr/0002-service-boundary.md), [ADR-0008](adr/0008-controlled-tool-use.md), and [docs/agent-tools.md](agent-tools.md).
 
 **Async analysis jobs (Phase 5, [ADR-0009](adr/0009-async-analysis-jobs.md)):** Workflow B runs as a job. The API persists an `AnalysisRun` (`Queued`), enqueues it on a **bounded in-process `Channel`** (`AnalysisJobQueue`), and returns `202`. An `AnalysisWorker` `BackgroundService` (concurrency capped by `Analysis:MaxConcurrency`, default 2) consumes jobs in DI scopes and drives `IncidentInvestigationOrchestrator`: `Queued → Running`, builds the normalized incident context, calls the AI service, validates, persists the result, and transitions to `Succeeded | Failed`. No Redis/Kafka/SQS — the queue is in-process for the MVP; a full queue persists `Failed(QUEUE_FULL)` instead of dropping work. Transient AI failures are retried with bounded backoff; a per-job timeout (default 600s) guarantees no job stays `Running` forever; interrupted runs are recovered as `WORKER_INTERRUPTED` on startup.
 

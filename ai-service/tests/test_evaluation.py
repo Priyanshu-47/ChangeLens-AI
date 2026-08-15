@@ -284,6 +284,35 @@ def test_ai_pipeline_records_schema_grounding_and_coverage(fake_retrieval):
     assert "TokenService.cs" in result.ai.gold_covered
 
 
+def test_tool_loop_metrics_recorded(fake_retrieval):
+    """Phase 8: the runner measures proposal validity, loop completion, and grounding
+    after tool results with the deterministic mock provider (zero Gemini)."""
+    settings = make_settings(ai_auto_retrieve=True)
+    analysis = AnalysisService(
+        provider=MockAIProvider(), settings=settings, retrieval=fake_retrieval
+    )
+    runner = EvaluationRunner(
+        retrieval=fake_retrieval, analysis=analysis, project_id="p1",
+        k_values=[5], legs=["hybrid"], dataset_version="v1", ai_pipeline=True,
+    )
+    result = runner.evaluate_case(simple_case())
+
+    assert result.tools.status == "evaluated"
+    assert result.tools.proposals >= 2
+    assert result.tools.proposals_valid == result.tools.proposals
+    assert result.tools.loop_completed is True
+    assert result.tools.grounding_after_tools is True
+    assert "get_dependency_paths" in result.tools.tool_names
+    assert "get_runbook" in result.tools.tool_names
+
+    report = runner.build_report([simple_case()], [result])
+    tools = report["summary"]["tools"]
+    assert tools["evaluated"] == 1
+    assert tools["proposalValidity"] == 1.0
+    assert tools["loopCompleted"] == 1
+    assert tools["groundingAfterTools"] == 1
+
+
 def test_analysis_response_includes_retrieval_trace(fake_retrieval):
     settings = make_settings(ai_auto_retrieve=True)
     analysis = AnalysisService(

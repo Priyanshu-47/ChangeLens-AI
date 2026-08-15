@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .common import ApiModel
 
@@ -232,11 +232,61 @@ class IncidentAnalysisResult(ApiModel):
     evidence: list[IncidentEvidenceItem] = Field(default_factory=list, max_length=50)
 
 
+class ToolCall(ApiModel):
+    """A tool proposal the model made this turn (Phase 8).
+
+    The name MUST exist in the request's tool_catalog; argument validation and
+    execution happen in .NET, never here.
+    """
+
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
+class IncidentTurnResult(ApiModel):
+    """One turn of the tool loop: either a tool proposal or the final result.
+
+    This is the response schema passed to the provider when tool_catalog is present.
+    `kind=final` requires a result (grounding is enforced afterwards); `kind=tool_call`
+    requires a tool_call. The backend loops: propose -> execute -> feed back -> final.
+    """
+
+    kind: Literal["tool_call", "final"] = "final"
+    tool_call: ToolCall | None = None
+    result: IncidentAnalysisResult | None = None
+
+    @model_validator(mode="after")
+    def _check_kind(self) -> "IncidentTurnResult":
+        if self.kind == "final" and self.result is None:
+            raise ValueError("kind=final requires a result.")
+        if self.kind == "tool_call" and self.tool_call is None:
+            raise ValueError("kind=tool_call requires tool_call.")
+        return self
+
+
 class IncidentAnalysisResponse(ApiModel):
+    """One turn's response for an incident investigation.
+
+    Without a tool catalog this is exactly the Phase 5 shape (`kind=final` and the
+    validated result). With a catalog the backend loops on `kind=tool_call` until
+    `kind=final`, feeding each `tool_call` back as a ToolResultItem.
+    """
+
     analysis_type: Literal["incident"] = "incident"
-    result: IncidentAnalysisResult
+    kind: Literal["final", "tool_call"] = "final"
+    tool_call: ToolCall | None = None
+    result: IncidentAnalysisResult | None = None
     usage: AnalysisUsage
     trace: RetrievalTrace | None = None
+
+    @model_validator(mode="after")
+    def _check_kind(self) -> "IncidentAnalysisResponse":
+        if self.kind == "final" and self.result is None:
+            raise ValueError("kind=final requires a result.")
+        if self.kind == "tool_call" and self.tool_call is None:
+            raise ValueError("kind=tool_call requires tool_call.")
+        return self
 
 
 # --- retrieval / ingestion ---

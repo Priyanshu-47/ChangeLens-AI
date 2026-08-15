@@ -16,7 +16,7 @@ changelens-ai/
 │   ├── src/
 │   │   ├── ChangeLens.Api/           ← controllers, middleware, DI composition, auth
 │   │   ├── ChangeLens.Domain/        ← entities, value objects, invariants (no deps)
-│   │   ├── ChangeLens.Application/   ← services, use-case orchestration, DTOs, ports
+│   │   ├── ChangeLens.Application/   ← services, use-case orchestration, DTOs, ports, Phase 8 tool registry + read-only tools (Tools/)
 │   │   └── ChangeLens.Infrastructure/← EF Core, Roslyn analyzer, HTTP client to AI service
 │   └── tests/
 │       ├── ChangeLens.UnitTests/     ← domain + service unit tests (mocked AI)

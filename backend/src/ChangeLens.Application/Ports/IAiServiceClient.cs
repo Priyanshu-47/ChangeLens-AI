@@ -24,4 +24,12 @@ public interface IAiServiceClient
     /// </summary>
     Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
         IncidentAnalysisRequestDto request, CancellationToken ct);
+
+    /// <summary>
+    /// Project-scoped hybrid retrieval (POST /internal/v1/retrieval/search). Used by the
+    /// Phase 8 read-only evidence tools (get_runbook, get_source_symbol, search_evidence)
+    /// — the AI service owns the corpus; .NET owns tool authorization/execution.
+    /// </summary>
+    Task<RetrievalSearchResponseDto> RetrievalSearchAsync(
+        RetrievalSearchRequestDto request, CancellationToken ct);
 }

@@ -28,6 +28,26 @@ const traceFixture: AnalysisTrace = {
       { id: 'chunk:def', documentType: 'SourceCode', title: null, path: 'src/Auth/TokenService.cs', score: 0.8, vectorScore: null, keywordRank: 2, dependencyRank: 1 },
     ],
   },
+  toolCalls: [
+    {
+      toolCallId: 'tool-1',
+      toolName: 'get_dependency_paths',
+      status: 'Executed',
+      durationMs: 14,
+      arguments: '{ "symbol": "TokenService", "maxDepth": 2 }',
+      errorCode: null,
+      evidenceIdCount: 2,
+    },
+    {
+      toolCallId: 'tool-2',
+      toolName: 'get_runbook',
+      status: 'Executed',
+      durationMs: 7,
+      arguments: '{ "query": "authentication failure", "topK": 3 }',
+      errorCode: null,
+      evidenceIdCount: 3,
+    },
+  ],
   failureCode: null,
   failureCategory: null,
 };
@@ -88,6 +108,48 @@ describe('TraceSection', () => {
     await waitFor(() => expect(screen.getAllByText('AI_PROVIDER').length).toBeGreaterThan(0));
     expect(screen.getAllByText('AI_UNAVAILABLE').length).toBeGreaterThan(0);
     expect(screen.getByText(/category AI_PROVIDER/)).toBeInTheDocument();
+  });
+
+  it('renders the tool calls with status badges and evidence counts', async () => {
+    const user = userEvent.setup();
+    mockTrace(traceFixture);
+    render(<TraceSection analysisId="an-1" status="Succeeded" />);
+
+    await user.click(screen.getByRole('button', { name: 'Show trace' }));
+
+    expect(await screen.findByText('Tools used')).toBeInTheDocument();
+    expect(screen.getByText('get_dependency_paths')).toBeInTheDocument();
+    expect(screen.getByText('get_runbook')).toBeInTheDocument();
+    expect(screen.getAllByText('Executed').length).toBe(2);
+    expect(screen.getByText(/2 executed · 2 total/)).toBeInTheDocument();
+    expect(screen.getByText('2 evidence ids attached')).toBeInTheDocument();
+    expect(screen.getByText('14 ms')).toBeInTheDocument();
+    expect(screen.getByText('7 ms')).toBeInTheDocument();
+  });
+
+  it('renders rejected tool calls with their error code', async () => {
+    const user = userEvent.setup();
+    mockTrace({
+      ...traceFixture,
+      toolCalls: [
+        {
+          toolCallId: 'tool-x',
+          toolName: 'execute_sql',
+          status: 'Rejected',
+          durationMs: 0,
+          arguments: null,
+          errorCode: 'TOOL_NOT_ALLOWED',
+          evidenceIdCount: 0,
+        },
+      ],
+    });
+    render(<TraceSection analysisId="an-1" status="Succeeded" />);
+
+    await user.click(screen.getByRole('button', { name: 'Show trace' }));
+
+    expect(await screen.findByText('execute_sql')).toBeInTheDocument();
+    expect(screen.getByText('Rejected')).toBeInTheDocument();
+    expect(screen.getByText('TOOL_NOT_ALLOWED')).toBeInTheDocument();
   });
 
   it('shows the in-progress hint while the analysis is still running', async () => {

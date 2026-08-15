@@ -115,6 +115,35 @@ ids by the grounding check. Retrieval queries are generated server-side from the
 context (title, symptom/error messages, service, symbol-like terms) preserving exact
 identifiers for the keyword leg (brief §13–14).
 
+#### Phase 8 tool loop (same endpoint, one turn per call)
+
+When the backend sends a non-empty `toolCatalog`, the endpoint becomes a **single turn** of
+the tool loop — one call returns either a proposal or the final result:
+```json
+{
+  "projectId": "…", "analysisId": "…", "incident": { … },
+  "promptVersion": "incident-tools-v1",        // tool-capable prompt (auto-selected)
+  "toolCatalog": [                               // the backend allowlist (proposals only)
+    { "name": "get_dependency_paths", "description": "…", "inputSchema": { … } },
+    { "name": "get_runbook", "description": "…", "inputSchema": { … } }
+  ],
+  "toolResults": [                               // executed/rejected outputs fed back
+    { "toolCallId": "…", "toolName": "get_dependency_paths", "status": "executed",
+      "output": "{\"evidenceIds\":[\"dependency:… -> …\"], \"payload\": { … }}", "errorCode": null }
+  ]
+}
+```
+→ `200` with `kind` and either `toolCall` or the validated `result`:
+```json
+{ "kind": "tool_call", "toolCall": { "id": "tool-1", "name": "get_dependency_paths", "arguments": { "symbol": "TokenService", "maxDepth": 2 } } }
+{ "kind": "final", "result": { "rootCauseCandidates": [ … ], "remediation": { … }, "unknowns": [ … ], "evidence": [ … ] } }
+```
+The AI service **never executes tools** — it parses proposals, renders the catalog and
+results as untrusted DATA, validates the turn (`kind=tool_call` requires a tool_call;
+`kind=final` requires a grounded result), and returns one turn per call. Tool results may
+attach `evidenceIds` (executor-declared, top-level only) that are added to the grounding
+vocabulary; ids inside narrative text are not citable. See [docs/agent-tools.md](agent-tools.md).
+
 ### Evaluation (Phase 7)
 The Phase 7 evaluation runner is a **local CLI** (`python -m app.evaluation.run`, docs/evaluation.md) — it drives retrieval + the mock-AI pipeline directly against the `ai` schema and writes reports to gitignored `data/evaluation-output/`. `POST /internal/v1/evaluations/run` remains deferred; a future backend-hosted evaluation endpoint would mirror this contract. Retrieval responses now include a `trace` block (queries, candidate/selected counts, budgets, per-item vector/keyword/dependency attribution) that the backend persists as `analysis_runs.TraceJson`.
 
@@ -129,17 +158,23 @@ The Phase 7 evaluation runner is a **local CLI** (`python -m app.evaluation.run`
 - **Safe failure:** on unrecoverable validation failure the service returns `422` with `{ code: "AI_VALIDATION_FAILED", details: { attempts, errors } }` — it never returns unvalidated prose as a "result".
 - **Idempotency keys** accepted on ingest; analysis calls are naturally idempotent (pure function of their input package).
 
-## 5. Tool-use boundary (Phase 6)
+## 5. Tool-use boundary (Phase 8 — implemented)
 
 The backend owns tool **schemas, execution, authorization, and audit**; the AI service only proposes calls:
 
 ```
-AI service (LLM turn):  "propose tool call: search_incidents(query='token refresh', project='…')"
-Backend:                validates input against schema → authorizes project → executes (SQL/API)
-                        → appends result to the conversation → returns to AI service for the next turn
+AI service (LLM turn):  returns { kind: "tool_call", toolCall: { id, name, arguments } }
+Backend:                registry lookup → argument validation → project authorization
+                        → executes read-only tool (bounded timeout) → sanitized result
+                        → appends result to toolResults → next AI turn … → { kind: "final" }
 ```
 
-Every proposed/executed call is appended to `analysis_runs.tool_calls` with outcome, latency, and audit-logged. No tool executes without backend authorization ([ADR-0008](adr/0008-controlled-tool-use.md), [security-model.md](security-model.md)).
+The loop is bounded (`Analysis:MaxToolCalls`, default 3; each tool timed by
+`Analysis:ToolTimeoutSeconds`). Every proposed/executed call is recorded on
+`analysis_runs.TraceJson.toolCalls` with outcome, latency, argument summary, and error code,
+and audit-logged (`ToolExecuted` / `ToolRejected`). No tool executes without backend
+authorization ([ADR-0008](adr/0008-controlled-tool-use.md), [docs/agent-tools.md](agent-tools.md),
+[security-model.md](security-model.md)).
 
 ## 6. Non-responsibilities checklist
 

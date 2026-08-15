@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { analysesApi } from '../api/endpoints';
-import type { AnalysisStage, AnalysisStatus, RetrievalTrace, RetrievalTraceItem } from '../api/types';
+import type { AnalysisStage, AnalysisStatus, RetrievalTrace, RetrievalTraceItem, ToolCallTrace } from '../api/types';
 import { useAsync } from '../hooks/useAsync';
 import { EmptyState, ErrorState, SectionHeading, SkeletonRows } from './ui';
 
@@ -92,10 +92,68 @@ function TraceBody({ trace, status }: { trace: NonNullable<Awaited<ReturnType<ty
           </div>
         ) : null}
 
+        {trace.toolCalls && trace.toolCalls.length > 0 ? (
+          <ToolCallsSection calls={trace.toolCalls} />
+        ) : null}
+
         {trace.retrieval ? <RetrievalExplorer retrieval={trace.retrieval} /> : null}
       </div>
     </div>
   );
+}
+
+function ToolCallsSection({ calls }: { calls: ToolCallTrace[] }) {
+  const executed = calls.filter((c) => c.status === 'Executed').length;
+  return (
+    <div className="retrieval-explorer">
+      <div className="section-heading" style={{ marginTop: 4 }}>
+        <h3 className="card-title">Tools used</h3>
+        <span className="small muted">
+          {executed} executed · {calls.length} total · bounded by the configured tool-call limit
+        </span>
+      </div>
+      <ul className="trace-items">
+        {calls.map((call) => (
+          <li className="trace-item" key={call.toolCallId}>
+            <div style={{ minWidth: 0 }}>
+              <div className="evidence-head">
+                <span className="mono small">{call.toolName}</span>
+                <ToolStatusBadge status={call.status} />
+                {call.errorCode ? <span className="badge badge-danger">{call.errorCode}</span> : null}
+              </div>
+              {call.arguments ? (
+                <div className="mono faint small truncate" title={call.arguments}>
+                  {call.arguments}
+                </div>
+              ) : null}
+              {call.evidenceIdCount != null ? (
+                <div className="small muted">
+                  {call.evidenceIdCount} evidence id{call.evidenceIdCount === 1 ? '' : 's'} attached
+                </div>
+              ) : null}
+            </div>
+            <span className="trace-duration mono">{call.durationMs != null ? `${call.durationMs} ms` : '—'}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="small muted" style={{ margin: '8px 0 0' }}>
+        The AI proposes tool calls; the application validates, authorizes, executes, and audits
+        each one. Tool outputs are treated as untrusted data.
+      </p>
+    </div>
+  );
+}
+
+function ToolStatusBadge({ status }: { status: ToolCallTrace['status'] }) {
+  const tone =
+    status === 'Executed'
+      ? 'badge-success'
+      : status === 'Rejected'
+        ? 'badge-warning'
+        : status === 'Failed'
+          ? 'badge-danger'
+          : 'badge-muted';
+  return <span className={`badge ${tone}`}>{status}</span>;
 }
 
 function TraceStageRow({ stage }: { stage: AnalysisStage }) {

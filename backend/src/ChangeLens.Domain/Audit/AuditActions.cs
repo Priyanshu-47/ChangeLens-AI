@@ -24,5 +24,9 @@ public static class AuditActions
     public const string AnalysisStarted = "AnalysisStarted";
     public const string AnalysisCompleted = "AnalysisCompleted";
     public const string AnalysisFailed = "AnalysisFailed";
+
+    // Phase 8 controlled tool loop (docs/agent-tools.md §18).
+    public const string ToolExecuted = "ToolExecuted";
+    public const string ToolRejected = "ToolRejected";
 }
 

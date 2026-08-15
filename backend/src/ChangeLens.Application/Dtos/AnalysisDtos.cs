@@ -106,6 +106,43 @@ public sealed class TimelineEventDto
     public string? RawData { get; set; }
 }
 
+/// <summary>One allowlisted tool the AI may propose (Phase 8, docs/agent-tools.md).</summary>
+public sealed class ToolDefinitionDto
+{
+    public string Name { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+
+    /// <summary>JSON Schema for the tool's arguments (sent to the AI service for prompting).</summary>
+    public Dictionary<string, object?> InputSchema { get; set; } = new();
+}
+
+/// <summary>A tool proposal the AI made this turn.</summary>
+public sealed class ToolCallDto
+{
+    public string Id { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public Dictionary<string, object?> Arguments { get; set; } = new();
+}
+
+/// <summary>Result of one executed/rejected tool call, fed back to the AI (untrusted).</summary>
+public sealed class ToolResultItemDto
+{
+    public string ToolCallId { get; set; } = string.Empty;
+
+    public string ToolName { get; set; } = string.Empty;
+
+    /// <summary>executed | rejected | failed | not_allowed | timeout</summary>
+    public string Status { get; set; } = "executed";
+
+    /// <summary>Sanitized JSON output (never raw exceptions or secrets).</summary>
+    public string? Output { get; set; }
+
+    public string? ErrorCode { get; set; }
+}
+
 /// <summary>Internal AI-service request for incident investigation.</summary>
 public sealed class IncidentAnalysisRequestDto
 {
@@ -120,14 +157,25 @@ public sealed class IncidentAnalysisRequestDto
     public int? MaxEvidenceChunks { get; set; }
 
     public int? MaxCharsPerChunk { get; set; }
+
+    /// <summary>Phase 8 tool loop: the allowlist sent to the AI service (proposals only).</summary>
+    public List<ToolDefinitionDto> ToolCatalog { get; set; } = [];
+
+    /// <summary>Accumulated tool results fed back into the next turn.</summary>
+    public List<ToolResultItemDto> ToolResults { get; set; } = [];
 }
 
-/// <summary>Validated incident investigation result from the AI service.</summary>
+/// <summary>One turn of the tool loop returned by the AI service.</summary>
 public sealed class IncidentAnalysisResponseDto
 {
     public string AnalysisType { get; set; } = "incident";
 
-    public IncidentAnalysisResultDto Result { get; set; } = new();
+    /// <summary>final | tool_call (Phase 8). Defaults to final for pre-tool contracts.</summary>
+    public string Kind { get; set; } = "final";
+
+    public ToolCallDto? ToolCall { get; set; }
+
+    public IncidentAnalysisResultDto? Result { get; set; }
 
     public AnalysisUsageDto Usage { get; set; } = new();
 
@@ -157,6 +205,7 @@ public static class AnalysisFailureCategory
         AnalysisFailureCode.AiTimeout => Timeout,
         AnalysisFailureCode.AiUnavailable => AiProvider,
         AnalysisFailureCode.JobTimeout => Timeout,
+        AnalysisFailureCode.ToolCallLimitExceeded => Validation,
         _ => Internal
     };
 }
@@ -180,6 +229,28 @@ public sealed class AnalysisStageDto
     public Dictionary<string, object?>? Metadata { get; set; }
 }
 
+/// <summary>One tool call recorded in the analysis trace (Phase 8, docs/agent-tools.md).</summary>
+public sealed class ToolCallTraceDto
+{
+    public string ToolCallId { get; set; } = string.Empty;
+
+    public string ToolName { get; set; } = string.Empty;
+
+    /// <summary>Proposed | Validated | Executed | Rejected | Failed.</summary>
+    public string Status { get; set; } = "Proposed";
+
+    /// <summary>Real wall-clock execution duration (never estimated).</summary>
+    public long? DurationMs { get; set; }
+
+    /// <summary>Truncated argument summary (identifiers only, never secrets).</summary>
+    public string? Arguments { get; set; }
+
+    public string? ErrorCode { get; set; }
+
+    /// <summary>Count of evidence ids the tool attached to its output.</summary>
+    public int? EvidenceIdCount { get; set; }
+}
+
 /// <summary>GET /api/v1/analyses/{analysisId}/trace response.</summary>
 public sealed class AnalysisTraceResponse
 {
@@ -200,6 +271,8 @@ public sealed class AnalysisTraceResponse
     public List<AnalysisStageDto> Stages { get; set; } = [];
 
     public RetrievalTraceDto? Retrieval { get; set; }
+
+    public List<ToolCallTraceDto> ToolCalls { get; set; } = [];
 
     public string? FailureCode { get; set; }
 
