@@ -92,9 +92,10 @@ public sealed class GitChangeSourceTests
     [Fact]
     public void WorkingTreeChange_ResolvesBaseFromGit_AndTargetFromDisk()
     {
-        // The demo repository's TokenService.cs carries a real, committed JWT key-rotation
-        // change in the working tree (Phase 4 demo scenario). Base must come from git HEAD,
-        // target from the working tree.
+        // The demo repository's TokenService.cs carries a real, UNCOMMITTED follow-up
+        // change in the working tree (Phase 4 demo scenario — a change under analysis is
+        // intentionally not committed). Base must come from git HEAD, target from the
+        // working tree.
         var resolution = Source().ResolveChange(
             [File("src/AcmePay.Application/Auth/TokenService.cs")],
             baseRevision: "HEAD",
@@ -104,8 +105,9 @@ public sealed class GitChangeSourceTests
         Assert.NotNull(file.BaseContent);
         Assert.NotNull(file.TargetContent);
         Assert.NotEqual(file.BaseContent, file.TargetContent);
-        Assert.Contains("TryValidateServiceToken", file.TargetContent!);
-        Assert.DoesNotContain("TryValidateServiceToken", file.BaseContent!);
+        Assert.Contains("CurrentSigningKeyFingerprint", file.TargetContent!);
+        Assert.Contains("ParseSigningKeys", file.TargetContent!);
+        Assert.DoesNotContain("CurrentSigningKeyFingerprint", file.BaseContent!);
     }
 
     [Fact]

@@ -93,8 +93,16 @@ class GeminiEmbeddingProvider:
         attempt = 0
         while True:
             try:
+                # Pass one explicit Content per text: the SDK collapses a plain list of
+                # strings into a SINGLE content (one embedding for N texts), which would
+                # silently shrink every batch. Verified against gemini-embedding-2.
+                contents = [
+                    types.Content(parts=[types.Part(text=text)]) for text in texts
+                ]
                 return self._client.models.embed_content(
-                    model=self._model, contents=texts, config=types.EmbedContentConfig(
+                    model=self._model,
+                    contents=contents,
+                    config=types.EmbedContentConfig(
                         output_dimensionality=self._dimension,
                     ),
                 )

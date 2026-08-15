@@ -144,10 +144,12 @@ today, verified against `backend/` and `ai-service/`.
   section; per-chunk caps and total budgets (`MAX_EVIDENCE_CHUNKS`, `MAX_CHARS_PER_CHUNK`,
   context-token cap) bound the context. The grounding validator is unchanged: unknown ids
   still fail validation.
-- **Demo scenario**: the working tree of `data/demo-repository` carries a committed JWT
-  signing-key rotation change in `TokenService.cs`; the engine resolves it against git
-  HEAD and produces 4 changed symbols, 2 added symbols, 2 impacted symbols (incl. the
-  `Program` DI registration), 8 relevant dependency edges and 2 dependency paths.
+- **Demo scenario**: the working tree of `data/demo-repository` carries an UNCOMMITTED
+  follow-up change in `TokenService.cs` (signing-key parsing extraction + a rotation
+  fingerprint for monitoring) — a change under analysis is intentionally not committed;
+  the engine resolves it against git HEAD and produces 5 changed symbols, 2 added
+  symbols, 2 impacted symbols (incl. the `Program` DI registration), 10 relevant
+  dependency edges and 2 dependency paths.
 
 **Deferred (documented here so nobody claims otherwise)**
 
