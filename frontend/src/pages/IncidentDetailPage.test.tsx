@@ -55,7 +55,12 @@ describe('IncidentDetailPage', () => {
     expect(await screen.findByText('HTTP 401 after JWT signing-key rotation')).toBeInTheDocument();
     expect(screen.getByText('JWT signing key rotated')).toBeInTheDocument();
     expect(screen.getByText('HTTP 401 spike')).toBeInTheDocument();
-    expect(await screen.findByText('No investigations yet')).toBeInTheDocument();
+    // The investigations list loads via a separate request; under parallel test
+    // workers the default 1s findBy timeout occasionally loses the race, so wait
+    // a little longer (assertion-hardening, not a product change).
+    expect(
+      await screen.findByText('No investigations yet', undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
 
     // Timeline is chronological: deployment event precedes the error event.
     const items = screen.getAllByRole('listitem').filter((el) => el.className.includes('timeline-item'));
