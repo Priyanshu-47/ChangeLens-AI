@@ -19,6 +19,7 @@ from google.genai import types
 from .base import (
     ProviderAuthError,
     ProviderBadRequest,
+    ProviderError,
     ProviderRateLimited,
     ProviderTimeout,
     ProviderUnavailable,
@@ -73,7 +74,7 @@ class GeminiProvider:
         config = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
-            response_schema=response_schema,
+            response_schema=api_safe_schema(response_schema),
             max_output_tokens=self._max_output_tokens,
         )
 
@@ -169,6 +170,55 @@ class GeminiProvider:
             return ProviderUnavailable(f"Gemini transport error: {type(exc).__name__}.")
         # Unknown SDK bug — still sanitized, still a provider failure.
         return ProviderUnavailable(f"Gemini SDK error: {type(exc).__name__}.")
+
+
+def api_safe_schema(response_schema: type) -> dict:
+    """Normalize a Pydantic model to a responseSchema the Gemini API accepts.
+
+    Verified against gemini-3.7-flash (Aug 2026): the API rejects `$ref`/`$defs`
+    (nested-model references) and `enum` with HTTP 400 INVALID_ARGUMENT, while plain
+    inline objects/arrays are fine. The normalized schema is a GENERATION HINT only —
+    the response is still validated deterministically by Pydantic (ADR-0007), so enum
+    constraints are enforced server-side, not by the API. Optional fields (anyOf with a
+    null branch) are collapsed to their non-null type; defaults/titles are dropped.
+    """
+    schema = response_schema.model_json_schema()
+    defs = schema.get("$defs", {})
+
+    def resolve(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                name = ref[len("#/$defs/") :]
+                return resolve(defs[name]) if name in defs else {"type": "object"}
+
+            if "anyOf" in node:
+                # Optional fields: pick the non-null branch and merge its constraints.
+                merged: dict = {}
+                for branch in node["anyOf"]:
+                    if branch.get("type") != "null":
+                        merged.update(resolve(branch))
+                return merged
+            if "allOf" in node:
+                merged = {}
+                for branch in node["allOf"]:
+                    merged.update(resolve(branch))
+                return merged
+
+            # Strip JSON-schema annotations, but never real field names: RiskFactor has
+            # a field literally named "title" (dict value), while the annotation is a
+            # string — removing the latter must not remove the former.
+            return {
+                k: resolve(v)
+                for k, v in node.items()
+                if k not in ("$defs", "enum", "default")
+                and not (k == "title" and isinstance(v, str))
+            }
+        if isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    return resolve(schema)
 
 
 def extract_retry_after(exc: Exception) -> float | None:

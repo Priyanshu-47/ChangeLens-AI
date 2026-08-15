@@ -8,10 +8,11 @@ namespace ChangeLens.UnitTests.Analysis;
 
 /// <summary>
 /// Phase 4 demo scenario (brief §40): the demo repository's working tree contains a real,
-/// committed JWT signing-key rotation change in TokenService.cs. The engine must resolve
-/// base (git HEAD) vs target (working tree), run Roslyn, build the dependency graph, and
-/// produce a change model with changed/added symbols, impacted symbols, dependency edges,
-/// and dependency paths — without any AI call.
+/// UNCOMMITTED follow-up change in TokenService.cs (signing-key parsing extraction +
+/// rotation fingerprint for monitoring). The engine must resolve base (git HEAD) vs
+/// target (working tree), run Roslyn, build the dependency graph, and produce a change
+/// model with changed/added symbols, impacted symbols, dependency edges, and dependency
+/// paths — without any AI call.
 /// </summary>
 public sealed class ChangeAnalysisEngineTests
 {
@@ -34,7 +35,7 @@ public sealed class ChangeAnalysisEngineTests
 
     private static AnalyzeChangeRiskRequest TokenServiceChange() => new()
     {
-        ChangeSummary = "JWT signing key rotation: issue and validate against the full key history.",
+        ChangeSummary = "Key-rotation observability: extract signing-key parsing and expose the current key fingerprint for monitoring.",
         ChangedFiles =
         [
             new ChangedFileRequest
@@ -48,22 +49,21 @@ public sealed class ChangeAnalysisEngineTests
     };
 
     [Fact]
-    public void TokenServiceRotation_ProducesChangedAndAddedSymbols()
+    public void TokenServiceChange_ProducesChangedAndAddedSymbols()
     {
         var model = Engine().BuildChangeModel(TokenServiceChange());
 
-        // Changed method (modified signature/body) and added methods.
-        Assert.Contains(model.ChangedSymbols, s =>
-            s.Name == "IssueServiceToken" && s.FullyQualifiedName.Contains("TokenService"));
-        Assert.Contains(model.ModifiedSymbols, s => s.Name == "IssueServiceToken");
-        Assert.Contains(model.AddedSymbols, s => s.Name == "TryValidateServiceToken");
-        Assert.Contains(model.AddedSymbols, s => s.Name == "SigningKeys");
+        // Modified method (body delegates to the extracted parser) and added methods.
+        Assert.Contains(model.ChangedSymbols, s => s.Name == "SigningKeys");
+        Assert.Contains(model.ModifiedSymbols, s => s.Name == "SigningKeys");
+        Assert.Contains(model.AddedSymbols, s => s.Name == "ParseSigningKeys");
+        Assert.Contains(model.AddedSymbols, s => s.Name == "CurrentSigningKeyFingerprint");
 
         // The change file was enriched with the symbol names (client sees evidence).
         var file = Assert.Single(model.ChangedFiles);
-        Assert.Contains("IssueServiceToken", file.SymbolsChanged);
+        Assert.Contains("SigningKeys", file.SymbolsChanged);
         Assert.NotNull(file.DiffPreview);
-        Assert.Contains("TryValidateServiceToken", file.DiffPreview);
+        Assert.Contains("CurrentSigningKeyFingerprint", file.DiffPreview);
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class ChangeAnalysisEngineTests
         var model = Engine().BuildChangeModel(TokenServiceChange());
 
         // Real numbers for the Phase 4 report — printed, not fabricated.
-        Console.WriteLine("== Demo scenario: JWT signing key rotation ==");
+        Console.WriteLine("== Demo scenario: key-rotation observability follow-up ==");
         Console.WriteLine($"  Changed symbols: {model.ChangedSymbols.Count} ({string.Join(", ", model.ChangedSymbols.Select(s => s.Name))})");
         Console.WriteLine($"  Added symbols: {model.AddedSymbols.Count} ({string.Join(", ", model.AddedSymbols.Select(s => s.Name))})");
         Console.WriteLine($"  Modified symbols: {model.ModifiedSymbols.Count}");
