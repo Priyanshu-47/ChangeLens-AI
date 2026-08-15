@@ -81,6 +81,30 @@ public sealed class ExternalIntegrationImpactDto
 /// APIs, and external integrations. Evidence is discovered server-side — the client
 /// does not supply it.
 /// </summary>
+/// <summary>One resolved dependency path between two repo symbols (Phase 8 tool).</summary>
+public sealed class SymbolDependencyPathDto
+{
+    public string From { get; set; } = string.Empty;
+
+    public string To { get; set; } = string.Empty;
+
+    /// <summary>CALLS | REFERENCES_TYPE | IMPLEMENTS | INHERITS</summary>
+    public string EdgeType { get; set; } = string.Empty;
+
+    public string? FilePath { get; set; }
+}
+
+/// <summary>Result of the get_dependency_paths tool (bounded traversal, read-only).</summary>
+public sealed class SymbolDependencyPathsDto
+{
+    /// <summary>Resolved fully-qualified symbol id, or null when the symbol is unknown.</summary>
+    public string? ResolvedSymbol { get; set; }
+
+    public List<SymbolDependencyPathDto> Paths { get; set; } = [];
+
+    public List<string> Warnings { get; set; } = [];
+}
+
 public sealed class ChangeModelDto
 {
     /// <summary>Changed files enriched with the symbols they contain.</summary>

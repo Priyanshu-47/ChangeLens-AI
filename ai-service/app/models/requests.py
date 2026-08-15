@@ -176,11 +176,37 @@ class IncidentContextItem(ApiModel):
     unknowns: list[str] = Field(default_factory=list, max_length=50)
 
 
+class ToolDefinition(ApiModel):
+    """One allowlisted tool the AI may propose (Phase 8, docs/agent-tools.md).
+
+    The catalog is sent by the backend (the application owns the allowlist); the AI
+    service only renders it into the prompt and parses proposals. It never executes
+    tools — validation, authorization, and execution happen in .NET.
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=2000)
+    input_schema: dict[str, object] = Field(default_factory=dict)
+
+
+class ToolResultItem(ApiModel):
+    """Result of one executed/rejected tool call, fed back to the AI (untrusted data)."""
+
+    tool_call_id: str = Field(min_length=1, max_length=100)
+    tool_name: str = Field(min_length=1, max_length=100)
+    status: Literal["executed", "rejected", "failed", "not_allowed", "timeout"] = "executed"
+    output: str | None = Field(default=None, max_length=100_000)
+    error_code: str | None = Field(default=None, max_length=100)
+
+
 class IncidentAnalysisRequest(ApiModel):
     """Incident investigation request (docs/ai-service-boundary.md §5).
 
     The backend owns job orchestration and passes the normalized context; the AI
     service performs hybrid retrieval and returns a grounded investigation.
+    Phase 8: when `tool_catalog` is non-empty the service returns one turn at a
+    time (`kind: tool_call | final`) and `tool_results` carries executed tool
+    outputs back into the next turn. Tools are proposals only — never executed here.
     """
 
     project_id: str = Field(min_length=1, max_length=100)
@@ -191,6 +217,9 @@ class IncidentAnalysisRequest(ApiModel):
     retrieved_documents: list[RetrievedDocumentItem] = Field(default_factory=list, max_length=50)
     max_evidence_chunks: int | None = Field(default=None, ge=1, le=100)
     max_chars_per_chunk: int | None = Field(default=None, ge=500, le=100_000)
+    # Phase 8 tool loop (docs/agent-tools.md): the allowlist + accumulated results.
+    tool_catalog: list[ToolDefinition] = Field(default_factory=list, max_length=32)
+    tool_results: list[ToolResultItem] = Field(default_factory=list, max_length=16)
 
 
 class RiskAnalysisRequest(ApiModel):

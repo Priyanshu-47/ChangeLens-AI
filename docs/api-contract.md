@@ -155,6 +155,25 @@ when `Succeeded`; `error` is `{ "code": "LLM_RATE_LIMITED", "message": "…" }` 
 (never raw stack traces or secrets). `type` is `ChangeRisk` (synchronous Phase 2/4 slice)
 or `IncidentInvestigation` (async Phase 5).
 
+### Analysis trace (Phase 7, extended Phase 8)
+
+`GET /api/v1/analyses/{analysisId}/trace` (same authorization as the analysis) returns real
+per-stage timings, the retrieval trace, and the Phase 8 tool-call records:
+
+```json
+{
+  "analysisId": "…", "type": "IncidentInvestigation", "status": "Succeeded",
+  "model": "…", "promptVersion": "incident-tools-v1", "traceSchemaVersion": "trace-v1",
+  "stages": [ { "name": "Context", "status": "Completed", "durationMs": 12 }, … ],
+  "retrieval": { "queries": [], "candidateCount": 4, "selectedCount": 2, "items": [] },
+  "toolCalls": [
+    { "toolCallId": "tool-1", "toolName": "get_dependency_paths", "status": "Executed",
+      "durationMs": 14, "arguments": "{ \"symbol\": \"TokenService\" }", "errorCode": null, "evidenceIdCount": 2 }
+  ],
+  "failureCode": null, "failureCategory": null
+}
+```
+
 ## 4. Authorization matrix (summary)
 
 | Resource | Viewer | Engineer | Admin | Owner |
@@ -170,7 +189,8 @@ Project membership is required for every project-scoped call ([ADR-0012](adr/001
 
 1. `POST /api/v1/incidents/{incidentId}/investigate` returns `202 Accepted` with body `{ "analysisId", "status": "Queued", "statusUrl": "/api/v1/analyses/{analysisId}" }` and a `Location` header.
 2. Job states: `Queued → Running → Succeeded | Failed`, enforced by a state machine (`AnalysisRun.TransitionTo`) — a job can never move backwards or be re-completed.
-3. Failure codes (machine-readable `error.code`): `AI_VALIDATION_FAILED`, `LLM_RATE_LIMITED`, `AI_TIMEOUT`, `AI_UNAVAILABLE`, `JOB_TIMEOUT`, `QUEUE_FULL`, `WORKER_INTERRUPTED`, `INTERNAL`.
+3. Failure codes (machine-readable `error.code`): `AI_VALIDATION_FAILED`, `LLM_RATE_LIMITED`, `AI_TIMEOUT`, `AI_UNAVAILABLE`, `JOB_TIMEOUT`, `QUEUE_FULL`, `WORKER_INTERRUPTED`, `TOOL_CALL_LIMIT_EXCEEDED` (Phase 8), `INTERNAL`.
 4. Idempotency: the body accepts a client-generated `requestId`; while a run with the same `projectId + requestId` is Queued/Running the submission returns the existing job (no duplicate AI spend). After a terminal state the same key starts a fresh run. The unique index only covers non-terminal statuses.
 5. The queue is bounded and in-process (no Redis/Kafka); a full queue persists the run as `Failed(QUEUE_FULL)` rather than dropping it. Concurrency is capped (`Analysis:MaxConcurrency`, default 2). Transient AI failures (429/504/502) are retried with bounded backoff; 422 validation failures are never retried.
 6. Frontend polls with backoff (1s, 2s, 4s… cap 10s); no websockets in MVP. A job can never stay `Running` forever — the per-job timeout fails it as `JOB_TIMEOUT`; interrupted jobs are recovered as `WORKER_INTERRUPTED` on startup.
+7. **Phase 8 tool loop:** incident investigations run the bounded loop (AI proposes; the backend validates/authorizes/executes/audits; `Analysis:MaxToolCalls` default 3). Tool outcomes appear in the trace (`toolCalls`) and audit log (`ToolExecuted` / `ToolRejected`); tool results never change the authorization boundary. See [docs/agent-tools.md](agent-tools.md).

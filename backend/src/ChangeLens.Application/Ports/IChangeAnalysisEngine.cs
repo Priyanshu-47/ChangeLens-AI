@@ -16,4 +16,12 @@ public interface IChangeAnalysisEngine
     /// the AI service still runs on the supplied change summary and paths.
     /// </summary>
     ChangeModelDto BuildChangeModel(AnalyzeChangeRiskRequest request);
+
+    /// <summary>
+    /// Bounded dependency-graph traversal for the Phase 8 <c>get_dependency_paths</c> tool.
+    /// Resolves a symbol (by id or name) in the current repository state and returns the
+    /// edges within <paramref name="maxDepth"/> hops. Traversal is bounded and read-only;
+    /// unknown symbols return an empty path list (never a failure).
+    /// </summary>
+    SymbolDependencyPathsDto FindDependencyPaths(string symbol, int maxDepth);
 }

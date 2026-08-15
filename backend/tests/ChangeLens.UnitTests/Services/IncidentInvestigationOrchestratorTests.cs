@@ -4,6 +4,7 @@ using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Exceptions;
 using ChangeLens.Application.Ports;
 using ChangeLens.Application.Services;
+using ChangeLens.Application.Tools;
 using ChangeLens.Domain.Analysis;
 using ChangeLens.Domain.Audit;
 using ChangeLens.Domain.Incidents;
@@ -21,10 +22,16 @@ public sealed class IncidentInvestigationOrchestratorTests : ServiceTestBase
 {
     private readonly FakeAiClient _ai = new();
 
-    private IncidentInvestigationOrchestrator Orchestrator(AnalysisOptions? options = null) => new(
-        Context, _ai, Audit,
-        Options.Create(options ?? new AnalysisOptions { MaxRetries = 1, RetryBackoffSeconds = 0, JobTimeoutSeconds = 30 }),
-        NullLogger<IncidentInvestigationOrchestrator>.Instance);
+    private IncidentInvestigationOrchestrator Orchestrator(AnalysisOptions? options = null)
+    {
+        var opts = options ?? new AnalysisOptions { MaxRetries = 1, RetryBackoffSeconds = 0, JobTimeoutSeconds = 30 };
+        var toolLoop = new ToolLoopOrchestrator(
+            new ToolRegistry([]), _ai, Audit, Options.Create(opts),
+            NullLogger<ToolLoopOrchestrator>.Instance);
+        return new IncidentInvestigationOrchestrator(
+            Context, _ai, toolLoop, Audit, Options.Create(opts),
+            NullLogger<IncidentInvestigationOrchestrator>.Instance);
+    }
 
     private async Task<(Guid projectId, Guid incidentId, Guid runId, AnalysisRun run)> CreateIncidentWithRunAsync()
     {
@@ -324,6 +331,10 @@ public sealed class IncidentInvestigationOrchestratorTests : ServiceTestBase
 
         public Task<ChangeRiskAnalysisResponse> AnalyzeChangeRiskAsync(
             AnalyzeChangeRiskRequest request, CancellationToken ct)
+            => throw new NotSupportedException("Not used in incident orchestrator tests.");
+
+        public Task<RetrievalSearchResponseDto> RetrievalSearchAsync(
+            RetrievalSearchRequestDto request, CancellationToken ct)
             => throw new NotSupportedException("Not used in incident orchestrator tests.");
     }
 }

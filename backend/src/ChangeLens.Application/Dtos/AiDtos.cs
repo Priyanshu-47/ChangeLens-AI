@@ -198,3 +198,40 @@ public sealed class RetrievalTraceDto
     public int MaxCharsPerChunk { get; init; }
     public List<RetrievalTraceItemDto> Items { get; init; } = [];
 }
+
+// ── Retrieval search (Phase 8 tool data layer — POST /internal/v1/retrieval/search) ──
+
+/// <summary>Project-scoped retrieval request used by the read-only evidence tools.</summary>
+public sealed class RetrievalSearchRequestDto
+{
+    public Guid ProjectId { get; set; }
+
+    public string Query { get; set; } = string.Empty;
+
+    public List<string>? DocumentTypes { get; set; }
+
+    /// <summary>hybrid | vector | keyword | dependency</summary>
+    public string Strategy { get; set; } = "hybrid";
+
+    public int K { get; set; } = 10;
+}
+
+/// <summary>One retrieval result (a chunk) with its document metadata.</summary>
+public sealed class RetrievalSearchResultDto
+{
+    public string ChunkId { get; init; } = string.Empty;
+    public string DocumentId { get; init; } = string.Empty;
+    public string DocumentType { get; init; } = string.Empty;
+    public string? ChunkType { get; init; }
+    public string? Source { get; init; }
+    public string Content { get; init; } = string.Empty;
+    public Dictionary<string, object?> Metadata { get; init; } = new();
+    public double Score { get; init; }
+}
+
+/// <summary>Retrieval search response (chunks are evidence ids `chunk:<uuid>`).</summary>
+public sealed class RetrievalSearchResponseDto
+{
+    public List<RetrievalSearchResultDto> Results { get; init; } = [];
+}
+

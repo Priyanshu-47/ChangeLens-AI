@@ -31,8 +31,8 @@ public sealed class IncidentInvestigationApiTests
 
     public IncidentInvestigationApiTests(DatabaseFixture fixture) => _fixture = fixture;
 
-    private TestApi NewApi(FakeAiClient? ai = null)
-        => new(_fixture.CreateFactory(services => services.AddSingleton<IAiServiceClient>(ai ?? new FakeAiClient())));
+    private TestApi NewApi(IAiServiceClient? ai = null)
+        => new(_fixture.CreateFactory(services => services.AddSingleton(ai ?? new FakeAiClient())));
 
     [Fact]
     public async Task Engineer_InvestigatesIncident_202_ThenPolledCompleted_WithGroundedResult()
@@ -92,6 +92,62 @@ public sealed class IncidentInvestigationApiTests
         Assert.Contains("AnalysisRequested", actions);
         Assert.Contains("AnalysisStarted", actions);
         Assert.Contains("AnalysisCompleted", actions);
+    }
+
+    [Fact]
+    public async Task ToolLoop_ExecutesRealToolsAgainstRealData_RecordsTraceAndAudit()
+    {
+        // Phase 8 end-to-end (docs/agent-tools.md §39): the AI client plays the mock
+        // provider's deterministic proposals (get_incident → get_incident_timeline →
+        // final); .NET validates, authorizes, and executes the REAL tools against the
+        // real PostgreSQL incident. The real FastAPI mock provider + grounding are
+        // covered by the Python test suite; this verifies the .NET loop plumbing.
+        var ai = new ToolLoopAiClient();
+        var api = NewApi(ai);
+        var (token, _) = await api.RegisterAsync($"inc-tool-{Guid.NewGuid():N}@test.dev");
+        var projectId = await api.CreateProjectAsync(token, "Tool Loop Project");
+        var incidentId = await CreateIncidentAsync(api, token, projectId, "HTTP 401 after JWT signing-key rotation");
+        ai.IncidentId = incidentId;
+
+        using var client = api.NewClient(token);
+        var submit = await client.PostAsJsonAsync(
+            $"/api/v1/incidents/{incidentId}/investigate", new { requestId = $"req-tool-{Guid.NewGuid():N}" });
+        Assert.Equal(HttpStatusCode.Accepted, submit.StatusCode);
+        var accepted = await submit.Content.ReadFromJsonAsync<InvestigationAcceptedResponse>();
+
+        var status = await PollUntilTerminalAsync(api, token, accepted!.AnalysisId);
+        Assert.Equal("Succeeded", status.Status);
+        Assert.Equal("incident-tools-v1", status.PromptVersion);
+        Assert.Null(status.Error);
+
+        // The loop sent the allowlist and fed tool results back between turns.
+        Assert.NotNull(ai.FirstReceived);
+        Assert.NotNull(ai.FirstReceived!.ToolCatalog);
+        Assert.Equal(7, ai.FirstReceived.ToolCatalog.Count);
+        Assert.Contains(ai.FirstReceived.ToolCatalog, t => t.Name == "get_incident");
+        Assert.Contains(ai.FirstReceived.ToolCatalog, t => t.Name == "get_dependency_paths");
+        Assert.Contains(ai.FirstReceived.ToolCatalog, t => t.Name == "search_evidence");
+        Assert.Equal(3, ai.Requests.Count);
+        Assert.Equal(1, ai.Requests[1].ToolResults.Count);
+        Assert.Equal("executed", ai.Requests[1].ToolResults[0].Status);
+        Assert.Equal(2, ai.Requests[2].ToolResults.Count);
+
+        // Tool calls are on the trace with real statuses; audit records executions.
+        var traceResponse = await client.GetAsync($"/api/v1/analyses/{accepted.AnalysisId}/trace");
+        traceResponse.EnsureSuccessStatusCode();
+        var trace = await traceResponse.Content.ReadFromJsonAsync<AnalysisTraceResponse>();
+        Assert.NotNull(trace);
+        Assert.Equal(2, trace!.ToolCalls.Count);
+        Assert.Equal("get_incident", trace.ToolCalls[0].ToolName);
+        Assert.Equal("get_incident_timeline", trace.ToolCalls[1].ToolName);
+        Assert.All(trace.ToolCalls, c => Assert.Equal("Executed", c.Status));
+        Assert.All(trace.ToolCalls, c => Assert.True(c.DurationMs >= 0));
+
+        using var auditClient = api.NewClient(token);
+        var auditBody = await (await auditClient.GetAsync(
+            $"/api/v1/audit-logs?projectId={projectId}&page=1&pageSize=50")).Content.ReadFromJsonAsync<AuditPage>();
+        var actions = auditBody!.Items.Select(a => a.Action).ToList();
+        Assert.Equal(2, actions.Count(a => a == "ToolExecuted"));
     }
 
     [Fact]
@@ -285,6 +341,107 @@ public sealed class IncidentInvestigationApiTests
         throw new TimeoutException($"Analysis {analysisId} did not reach a terminal state within {timeoutSeconds}s.");
     }
 
+    private sealed class ToolLoopAiClient : IAiServiceClient
+    {
+        public Guid IncidentId { get; set; }
+
+        public IncidentAnalysisRequestDto? FirstReceived { get; private set; }
+
+        public List<IncidentAnalysisRequestDto> Requests { get; } = [];
+
+        private int _turn;
+
+        public Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
+            IncidentAnalysisRequestDto request, CancellationToken ct)
+        {
+            FirstReceived ??= request;
+            Requests.Add(new IncidentAnalysisRequestDto
+            {
+                AnalysisId = request.AnalysisId,
+                ProjectId = request.ProjectId,
+                Incident = request.Incident,
+                PromptVersion = request.PromptVersion,
+                ToolCatalog = request.ToolCatalog.ToList(),
+                ToolResults = request.ToolResults.ToList()
+            });
+
+            _turn++;
+            return Task.FromResult(_turn switch
+            {
+                1 => ToolCall("get_incident", new { incidentId = IncidentId }),
+                2 => ToolCall("get_incident_timeline", new { incidentId = IncidentId }),
+                _ => FinalGrounded(IncidentId)
+            });
+        }
+
+        public Task<ChangeRiskAnalysisResponse> AnalyzeChangeRiskAsync(
+            AnalyzeChangeRiskRequest request, CancellationToken ct)
+            => throw new NotSupportedException("Not used in incident investigation tests.");
+
+        public Task<RetrievalSearchResponseDto> RetrievalSearchAsync(
+            RetrievalSearchRequestDto request, CancellationToken ct)
+            => throw new NotSupportedException("Not used in incident investigation tests.");
+
+        private static IncidentAnalysisResponseDto ToolCall(string name, object args) => new()
+        {
+            AnalysisType = "incident",
+            Kind = "tool_call",
+            ToolCall = new ToolCallDto
+            {
+                Id = "tool-" + name,
+                Name = name,
+                Arguments = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                    System.Text.Json.JsonSerializer.Serialize(args, JsonOptions), JsonOptions)!
+            },
+            Usage = new AnalysisUsageDto { Model = "mock", ValidationStatus = "valid" }
+        };
+
+        private static IncidentAnalysisResponseDto FinalGrounded(Guid incidentId) => new()
+        {
+            AnalysisType = "incident",
+            Kind = "final",
+            Result = new IncidentAnalysisResultDto
+            {
+                RootCauseCandidates =
+                [
+                    new RootCauseCandidateDto
+                    {
+                        Id = "cand-1",
+                        Title = "Change-related hypothesis from tool-surfaced evidence",
+                        Confidence = 0.6,
+                        Status = "Candidate",
+                        EvidenceIds = [$"incident:{incidentId:N}"],
+                        Reasoning = "The incident record and timeline were gathered via the tool loop.",
+                        Unknowns = ["No deployment timestamp was supplied."]
+                    }
+                ],
+                Remediation = new RemediationDto
+                {
+                    ImmediateMitigation = "Confirm the deployment window and check the service's health.",
+                    InvestigationSteps = ["Correlate the first error with the deployment window."],
+                    InsufficientEvidence = false
+                },
+                Unknowns = [],
+                Evidence =
+                [
+                    new EvidenceItemDto
+                    {
+                        Id = $"incident:{incidentId:N}",
+                        Type = "Document",
+                        Reference = $"incident:{incidentId:N}",
+                        Summary = "Incident record surfaced by the get_incident tool."
+                    }
+                ]
+            },
+            Usage = new AnalysisUsageDto
+            {
+                Model = "mock-gemini-3.1-flash-lite",
+                PromptVersion = "incident-tools-v1",
+                ValidationStatus = "valid"
+            }
+        };
+    }
+
     private sealed class FakeAiClient : IAiServiceClient
     {
         public IncidentAnalysisRequestDto? Received { get; private set; }
@@ -361,6 +518,10 @@ public sealed class IncidentInvestigationApiTests
         public Task<ChangeRiskAnalysisResponse> AnalyzeChangeRiskAsync(
             AnalyzeChangeRiskRequest request, CancellationToken ct)
             => throw new NotSupportedException("Not used in incident investigation tests.");
+
+        public Task<RetrievalSearchResponseDto> RetrievalSearchAsync(
+            RetrievalSearchRequestDto request, CancellationToken ct)
+            => Task.FromResult(new RetrievalSearchResponseDto());
     }
 
     private sealed class AuditPage

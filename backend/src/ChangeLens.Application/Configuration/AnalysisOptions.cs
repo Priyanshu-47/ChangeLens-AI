@@ -29,4 +29,12 @@ public sealed class AnalysisOptions
     /// re-enqueue Queued runs that were persisted but never processed.
     /// </summary>
     public bool RecoverOnStartup { get; set; } = true;
+
+    // --- Phase 8 controlled tool loop (docs/agent-tools.md) ---
+
+    /// <summary>Maximum tool calls per analysis (AI_MAX_TOOL_CALLS). Never unbounded.</summary>
+    public int MaxToolCalls { get; set; } = 3;
+
+    /// <summary>Per-tool execution timeout; a hung tool cannot stall the whole job.</summary>
+    public int ToolTimeoutSeconds { get; set; } = 30;
 }

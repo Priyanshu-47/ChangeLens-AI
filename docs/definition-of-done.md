@@ -9,16 +9,16 @@
 - [ ] **Evidence is inspectable:** the UI shows the evidence behind each conclusion and links to the underlying document/chunk/incident/deployment. (P5)
 - [ ] **Hybrid retrieval is real:** retrieval uses vector + keyword + metadata filtering + RRF (never vector-only); results show per-source scores. (P3)
 - [ ] **Project isolation:** a user of project A can never retrieve or view project B data, verified by tests. (P1, P3)
-- [ ] **Controlled tool use:** at least three tools (e.g. `search_incidents`, `get_deployment`, `get_logs`) can be proposed by the AI, executed only with backend authorization, with every call audited and visible in the trace. (P6)
+- [x] **Controlled tool use (Phase 8):** seven read-only, project-isolated tools are allowlisted in .NET; the AI proposes calls and the backend validates, authorizes, executes (bounded timeout), and audits every call; unknown tools → `TOOL_NOT_ALLOWED`, invalid args → `INVALID_ARGUMENT`, cross-project → `NOT_FOUND`, max calls → `TOOL_CALL_LIMIT_EXCEEDED`; calls are visible in the trace (`toolCalls`) and audit log (`ToolExecuted`/`ToolRejected`). No shell/SQL/URL/write tools; Python never executes tools. (P8)
 - [x] **Evaluation is honest:** the Phase 7 runner produces real JSON/Markdown reports with per-leg Recall@K / Precision@K / MRR / Hit Rate over the versioned 20-case golden dataset, plus schema-validity, mechanical grounding, and evidence-coverage counts — using mock providers (zero Gemini). Hybrid is not claimed superior unless the measured numbers show it; metrics are labeled as synthetic-corpus/mock-embedding results. (P7)
-- [ ] **AI trace view:** any analysis shows model, prompt version, retrieval queries + retrieved documents, tool calls, tokens, latency, estimated cost, validation + guardrail status. (P8)
+- [x] **AI trace view:** any analysis shows model, prompt version, retrieval queries + retrieved documents, per-stage timings, and (Phase 8) tool calls with statuses/durations — via `GET /analyses/{id}/trace` and the React Trace panel + Retrieval Explorer + Tools-used list. Tokens/cost are recorded only when the provider exposes them. (P7, P8)
 
 ## 2. Quality & correctness
 
 - [ ] **No uncontrolled prose** is ever returned as a primary analysis result (safe-failure path returns a structured error instead). (P2)
 - [ ] **No fabricated data:** no metric, benchmark, incident, or result exists that wasn't produced by an actual run (unit tests, eval runs, or seeded demo data explicitly labeled as demo). (all)
 - [ ] **Unknowns are honored:** schemas include `unknowns`; investigations distinguish Evidence / Hypothesis / Unknown / Recommendation in the UI. (P4, P5)
-- [ ] **Prompt-injection defense verified:** at least one test plants "instructions" in ingested content and asserts they are not followed; the layered prompt + pre-scan are documented. (P2/P8)
+- [x] **Prompt-injection defense verified:** tests plant instruction-like content and assert it is not followed; tool results are rendered as untrusted DATA with the same pre-scan, and the tool layer remains authoritative (a runbook cannot enable a tool or change project scope). (P2/P8)
 - [ ] **LLM is never used for deterministic work:** code review grep/test asserts parsing, dependency computation, and file-type checks are code, not LLM calls. (P4)
 - [ ] **Model names are config:** no model id is hardcoded in source; `.env.example` is the contract; readiness probe validates availability. (P2)
 

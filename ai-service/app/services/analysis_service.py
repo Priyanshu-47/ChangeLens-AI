@@ -35,6 +35,7 @@ from ..models.responses import (
     AnalysisUsage,
     IncidentAnalysisResponse,
     IncidentAnalysisResult,
+    IncidentTurnResult,
     RetrievalTrace,
     RetrievalTraceItem,
     RiskAnalysisResponse,
@@ -120,6 +121,10 @@ class AnalysisService:
         request, trace = await self._maybe_retrieve_incident(request)
 
         evidence_ids = set(build_incident_evidence_index(request))
+        tool_mode = bool(request.tool_catalog)
+        schema: type[BaseModel] = IncidentTurnResult if tool_mode else IncidentAnalysisResult
+        grounding = _check_turn_grounding if tool_mode else _check_incident_grounding
+
         prompt = build_incident_prompt(
             request,
             prompt_version=request.prompt_version,
@@ -131,8 +136,7 @@ class AnalysisService:
         )
 
         result, attempts, validation_status, raw = await self._generate_validated(
-            prompt, evidence_ids, schema=IncidentAnalysisResult,
-            grounding_check=_check_incident_grounding,
+            prompt, evidence_ids, schema=schema, grounding_check=grounding,
         )
 
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -145,8 +149,20 @@ class AnalysisService:
                 "latencyMs": usage.latency_ms,
                 "validationStatus": usage.validation_status,
                 "retrieved": len(request.retrieved_documents),
+                "toolMode": tool_mode,
+                "toolResults": len(request.tool_results),
             },
         )
+        if tool_mode:
+            turn: IncidentTurnResult = result  # type: ignore[assignment]
+            return IncidentAnalysisResponse(
+                analysis_type="incident",
+                kind=turn.kind,
+                tool_call=turn.tool_call,
+                result=turn.result,
+                usage=usage,
+                trace=trace,
+            )
         return IncidentAnalysisResponse(analysis_type="incident", result=result, usage=usage, trace=trace)
 
     async def _maybe_retrieve_incident(
@@ -473,6 +489,19 @@ def _build_retrieval_trace(
             for hit in hits
         ],
     )
+
+
+def _check_turn_grounding(
+    turn: IncidentTurnResult, evidence_ids: set[str]
+) -> list[str]:
+    """Grounding for a tool-loop turn: only the final result is a claim.
+
+    A tool proposal carries no claims, so nothing to ground; the final result must
+    satisfy the standard incident grounding rule against the (tool-extended) index.
+    """
+    if turn.kind != "final" or turn.result is None:
+        return []
+    return _check_incident_grounding(turn.result, evidence_ids)
 
 
 def _check_incident_grounding(

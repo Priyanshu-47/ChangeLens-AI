@@ -52,6 +52,19 @@ public static class DependencyInjection
         services.AddSingleton<AnalysisJobQueue>();
         services.AddSingleton<IAnalysisJobQueue>(sp => sp.GetRequiredService<AnalysisJobQueue>());
 
+        // Phase 8 controlled tool loop (ADR-0013): allowlisted read-only tools. The
+        // registry is the only way the AI can touch data — no dynamic discovery.
+        // Registered as ITool so the registry's IEnumerable<ITool> resolves all of them.
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.GetIncidentTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.GetIncidentTimelineTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.GetServiceTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.GetRunbookTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.GetSourceSymbolTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.GetDependencyPathsTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ITool, ChangeLens.Application.Tools.SearchEvidenceTool>();
+        services.AddScoped<ChangeLens.Application.Tools.ToolRegistry>();
+        services.AddScoped<ChangeLens.Application.Services.ToolLoopOrchestrator>();
+
         // Phase 4 change intelligence (ADR-0011: Roslyn lives in Infrastructure).
         services.AddSingleton<RoslynAnalyzer>();
         services.AddSingleton<ChangeAnalyzer>();

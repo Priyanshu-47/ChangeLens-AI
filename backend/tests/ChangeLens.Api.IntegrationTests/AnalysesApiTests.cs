@@ -266,6 +266,10 @@ public sealed class AnalysesApiTests
         public Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
             IncidentAnalysisRequestDto request, CancellationToken ct)
             => throw new NotSupportedException("Not used in change-risk tests.");
+
+        public Task<RetrievalSearchResponseDto> RetrievalSearchAsync(
+            RetrievalSearchRequestDto request, CancellationToken ct)
+            => throw new NotSupportedException("Not used in change-risk tests.");
     }
 
     private sealed class AuditPage

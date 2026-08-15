@@ -29,10 +29,13 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 PROMPT_FILES: dict[str, str] = {
     "risk-v1": "risk_v1.txt",
     "incident-v1": "incident_v1.txt",
+    # Phase 8 tool loop: same investigation contract + tool rules (agent-tools.md).
+    "incident-tools-v1": "incident_tools_v1.txt",
 }
 
 DEFAULT_PROMPT_VERSION = "risk-v1"
 DEFAULT_INCIDENT_PROMPT_VERSION = "incident-v1"
+DEFAULT_INCIDENT_TOOLS_PROMPT_VERSION = "incident-tools-v1"
 
 # Obvious instruction-like line prefixes stripped from evidence (defense in depth).
 _INSTRUCTION_PATTERNS = (
@@ -105,8 +108,77 @@ def build_incident_evidence_index(request: "IncidentAnalysisRequest") -> list[st
     Incident evidence is the retrieved package only: chunks carry stable ids
     (`chunk:<uuid>`). The incident record itself is context, not evidence — the model
     may not reference it, which keeps every claim tied to retrievable artifacts.
+    Phase 8: ids surfaced by tool results (their `evidenceIds` field) are added too,
+    so candidates can cite evidence the tool loop fetched (e.g. dependency ids,
+    runbook chunks). Tool outputs are untrusted; parsing is defensive and only the
+    ids the tool executor attached are admitted.
     """
-    return [d.id for d in request.retrieved_documents]
+    ids = [d.id for d in request.retrieved_documents]
+    ids.extend(_tool_result_evidence_ids(request.tool_results))
+    return ids
+
+
+def _tool_result_evidence_ids(tool_results: list) -> list[str]:
+    """Evidence ids the tool executor attached to tool outputs (grounding vocabulary).
+
+    Tool outputs are untrusted; we only admit ids the executor itself declared in a
+    top-level `evidenceIds` array. Everything else in the output is data, not ids.
+    """
+    ids: list[str] = []
+    for result in tool_results:
+        output = getattr(result, "output", None)
+        if not output:
+            continue
+        try:
+            data = json.loads(output)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("evidenceIds"), list):
+            for eid in data["evidenceIds"]:
+                if isinstance(eid, str) and eid and eid not in ids:
+                    ids.append(eid)
+    return ids
+
+
+def _render_tool_sections(
+    parts: list[str],
+    request: "IncidentAnalysisRequest",
+    *,
+    max_evidence_chars: int,
+) -> None:
+    """Render the tool catalog + accumulated tool results as untrusted DATA (Phase 8)."""
+    if request.tool_catalog:
+        parts.append("<tool_catalog>")
+        for tool in request.tool_catalog:
+            parts.append(f"tool: {sanitize_evidence(tool.name)}")
+            if tool.description:
+                parts.append(f"description: {sanitize_evidence(tool.description)}")
+            schema = json.dumps(tool.input_schema) if tool.input_schema else "{}"
+            parts.append(f"input_schema: {schema[:4000]}")
+        parts.append("</tool_catalog>")
+        parts.append("")
+
+    if request.tool_results:
+        budget = max_evidence_chars // 2
+        parts.append("<tool_results>")
+        for result in request.tool_results:
+            status = result.status
+            if result.error_code:
+                status = f"{status} ({result.error_code})"
+            parts.append(
+                f'<tool_result tool_call_id="{result.tool_call_id}" '
+                f'tool="{sanitize_evidence(result.tool_name)}" status="{status}">'
+            )
+            body = sanitize_evidence(result.output or "")
+            if len(body) > budget:
+                body = body[:budget]
+            parts.append(body if body.strip() else "(no output)")
+            parts.append("</tool_result>")
+            budget -= len(body)
+            if budget <= 0:
+                break
+        parts.append("</tool_results>")
+        parts.append("")
 
 
 def build_incident_prompt(
@@ -117,10 +189,23 @@ def build_incident_prompt(
     max_evidence_chars: int = 120_000,
     max_chars_per_chunk: int | None = None,
 ) -> PromptBundle:
-    """Render the layered incident-investigation prompt (brief §22)."""
-    version = prompt_version or DEFAULT_INCIDENT_PROMPT_VERSION
+    """Render the layered incident-investigation prompt (brief §22).
+
+    Phase 8: when the request carries a tool catalog, the tool-capable prompt version
+    is used (unless pinned) and the catalog + accumulated tool results are rendered as
+    DATA (untrusted) sections.
+    """
+    version = prompt_version or (
+        DEFAULT_INCIDENT_TOOLS_PROMPT_VERSION
+        if request.tool_catalog
+        else DEFAULT_INCIDENT_PROMPT_VERSION
+    )
     if version not in PROMPT_FILES:
-        version = DEFAULT_INCIDENT_PROMPT_VERSION
+        version = (
+            DEFAULT_INCIDENT_TOOLS_PROMPT_VERSION
+            if request.tool_catalog
+            else DEFAULT_INCIDENT_PROMPT_VERSION
+        )
 
     system_template = (_PROMPTS_DIR / PROMPT_FILES[version]).read_text(encoding="utf-8")
     schema_json = schema_json or json.dumps(
@@ -223,6 +308,10 @@ def _render_incident_user_section(
             break
     parts.append("</evidence_package>")
     parts.append("")
+
+    # Phase 8 tool sections: the allowlist (catalog) and accumulated tool results.
+    # Both are DATA — rendered with the untrusted-data header and instruction scan.
+    _render_tool_sections(parts, request, max_evidence_chars=max_evidence_chars)
 
     parts.append("<evidence_index>")
     for eid in build_incident_evidence_index(request):

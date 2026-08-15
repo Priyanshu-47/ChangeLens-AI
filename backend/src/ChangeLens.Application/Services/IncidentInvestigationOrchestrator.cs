@@ -3,6 +3,7 @@ using ChangeLens.Application.Configuration;
 using ChangeLens.Application.Dtos;
 using ChangeLens.Application.Exceptions;
 using ChangeLens.Application.Ports;
+using ChangeLens.Application.Tools;
 using ChangeLens.Application.Tracing;
 using ChangeLens.Domain.Analysis;
 using ChangeLens.Domain.Audit;
@@ -15,19 +16,22 @@ namespace ChangeLens.Application.Services;
 /// <summary>
 /// Worker-side incident investigation (ADR-0009, brief §2/§24–27). Executes one job:
 ///
-///   Queued → Running → (incident context → AI service hybrid retrieval → grounded
-///   investigation) → Succeeded | Failed
+///   Queued → Running → (incident context → AI service hybrid retrieval → controlled
+///   tool loop → grounded investigation) → Succeeded | Failed
 ///
 /// The state machine is enforced both here and in <see cref="AnalysisRun.TransitionTo"/>
 /// (a stale/double-enqueued job can never move a run backwards). Transient AI failures
 /// (429/504/502) are retried with bounded exponential backoff; 422 validation failures
 /// are never retried (retrying cannot repair the model's output). The per-job timeout is
 /// a linked CTS, so an analysis can never remain Running forever; on host shutdown the
-/// run is marked Failed(WORKER_INTERRUPTED) best-effort.
+/// run is marked Failed(WORKER_INTERRUPTED) best-effort. Phase 8: the AI analysis runs
+/// the controlled tool loop (docs/agent-tools.md) — the AI proposes, this orchestrator's
+/// loop validates, authorizes, executes, and audits each tool call.
 /// </summary>
 public sealed class IncidentInvestigationOrchestrator(
     IAppDbContext db,
     IAiServiceClient aiClient,
+    ToolLoopOrchestrator toolLoop,
     AuditLogService audit,
     IOptions<AnalysisOptions> options,
     ILogger<IncidentInvestigationOrchestrator> logger)
@@ -60,6 +64,12 @@ public sealed class IncidentInvestigationOrchestrator(
             await MarkFailedAsync(
                 job, AnalysisFailureCode.JobTimeout,
                 "The analysis exceeded the configured job timeout.", ct, trace);
+        }
+        catch (ToolCallLimitExceededException ex)
+        {
+            // Phase 8 safety bound: the AI proposed more tool calls than configured.
+            trace.Fail(AnalysisFailureCode.ToolCallLimitExceeded, ex.Message);
+            await MarkFailedAsync(job, AnalysisFailureCode.ToolCallLimitExceeded, ex.Message, ct, trace);
         }
         catch (AiServiceException ex)
         {
@@ -105,7 +115,9 @@ public sealed class IncidentInvestigationOrchestrator(
         var response = await RunWithRetriesAsync(job, run, trace, ct);
 
         run.TransitionTo(AnalysisStatus.Succeeded);
-        run.ResultJson = JsonSerializer.Serialize(response.Result, ResultJson);
+        // The tool loop only returns a final response when the AI service produced a
+        // validated result (kind=final); the null-forgive is a defensive invariant.
+        run.ResultJson = JsonSerializer.Serialize(response.Result!, ResultJson);
         run.ResultSchemaVersion = "incident-v1";
         run.Model = response.Usage.Model;
         run.PromptVersion = response.Usage.PromptVersion;
@@ -131,18 +143,20 @@ public sealed class IncidentInvestigationOrchestrator(
                 promptVersion = response.Usage.PromptVersion,
                 validationStatus = response.Usage.ValidationStatus,
                 latencyMs = response.Usage.LatencyMs,
-                candidates = response.Result.RootCauseCandidates.Count,
+                candidates = response.Result!.RootCauseCandidates.Count,
                 evidenceItems = response.Result.Evidence.Count,
-                unknowns = response.Result.Unknowns.Count
+                unknowns = response.Result.Unknowns.Count,
+                toolCalls = trace.ToolCalls.Count
             },
             ct: ct);
 
         logger.LogInformation(
             "Incident analysis completed for run {AnalysisRunId} (project {ProjectId}): " +
-            "{Candidates} root-cause candidates, {Evidence} evidence items, {Unknowns} unknowns",
+            "{Candidates} root-cause candidates, {Evidence} evidence items, {Unknowns} unknowns, " +
+            "{ToolCalls} tool calls",
             run.Id, run.ProjectId,
-            response.Result.RootCauseCandidates.Count, response.Result.Evidence.Count,
-            response.Result.Unknowns.Count);
+            response.Result!.RootCauseCandidates.Count, response.Result.Evidence.Count,
+            response.Result.Unknowns.Count, trace.ToolCalls.Count);
     }
 
     private async Task<IncidentAnalysisResponseDto> RunWithRetriesAsync(
@@ -163,12 +177,14 @@ public sealed class IncidentInvestigationOrchestrator(
             AnalysisId = run.Id,
             ProjectId = run.ProjectId,
             Incident = IncidentContextBuilder.Build(incident),
-            PromptVersion = "incident-v1"
+            PromptVersion = "incident-tools-v1"
         };
 
-        // One timed stage for the AI call (which internally performs hybrid retrieval
-        // and validation in the AI service — the per-item retrieval trace is attached
-        // separately, and the AI service's own latency is in Usage.LatencyMs).
+        // One timed stage for the whole AI analysis, including the Phase 8 tool loop
+        // (hybrid retrieval + per-turn validation happen inside the AI service; the
+        // per-item retrieval trace is attached separately and tool calls are recorded
+        // individually on the trace). Transient AI failures restart the loop from turn
+        // one — every tool is read-only, so a partial loop is safe to replay.
         var maxAttempts = Math.Max(1, Opts.MaxRetries + 1);
         using (trace.Stage("AI Analysis"))
         {
@@ -176,7 +192,11 @@ public sealed class IncidentInvestigationOrchestrator(
             {
                 try
                 {
-                    return await aiClient.AnalyzeIncidentAsync(request, ct);
+                    return await toolLoop.ExecuteAsync(
+                        request,
+                        new ToolExecutionContext(run.Id, run.ProjectId, job.IncidentId, ct),
+                        trace,
+                        ct);
                 }
                 catch (AiServiceException ex) when (IsTransient(ex) && attempt < maxAttempts)
                 {
@@ -278,7 +298,7 @@ public sealed class IncidentInvestigationOrchestrator(
             promptVersion = response.Usage.PromptVersion,
             validationStatus = response.Usage.ValidationStatus,
             evidenceTruncated = response.Usage.EvidenceTruncated,
-            candidateCount = response.Result.RootCauseCandidates.Count
+            candidateCount = response.Result?.RootCauseCandidates.Count ?? 0
         });
         return config;
     }

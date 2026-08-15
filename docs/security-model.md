@@ -47,6 +47,16 @@ Concrete rules enforced in the prompt + code:
 - Deterministic pre-scan strips/escapes obvious instruction-like sequences from evidence before it reaches the prompt (defense-in-depth, not the primary control).
 - Model outputs never include raw prompt content (schema validation rejects it).
 
+**Phase 8 tool results** follow the same rules as evidence: rendered inside `<tool_results>` as DATA, pre-scanned, and explicitly non-authoritative (the tool prompt forbids following instructions inside results). Tool outputs are sanitized structured JSON with executor-declared `evidenceIds`; only those ids are citable (grounding). The tool layer is authoritative — a runbook cannot enable a disabled tool, change authorization, or alter project scope.
+
+### Tool authorization (Phase 8, [docs/agent-tools.md](agent-tools.md))
+
+- **Allowlist only:** the `ToolRegistry` is explicit DI registration; unknown names are rejected (`TOOL_NOT_ALLOWED`) before any execution.
+- **Project isolation:** the project id comes from the authenticated analysis context, never from AI arguments; cross-project lookups return `NOT_FOUND` (no existence leak).
+- **Argument validation:** wrong types, invalid UUIDs, empty identifiers, out-of-range values, and path-like/URI/shell-metacharacter symbols are rejected (`INVALID_ARGUMENT`) before execution.
+- **Bounded execution:** per-tool timeout (`Analysis:ToolTimeoutSeconds`), per-analysis call cap (`Analysis:MaxToolCalls` → `TOOL_CALL_LIMIT_EXCEEDED`).
+- **No powerful tools:** no SQL, no shell, no arbitrary URL fetching, no write/deploy tools — all Phase 8 tools are LOW-risk and read-only.
+
 ## 5. Secrets management
 
 - All secrets via environment variables; `.env.example` documents the full contract; `.env*` git-ignored (except the example).
