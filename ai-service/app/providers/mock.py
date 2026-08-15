@@ -235,8 +235,19 @@ class MockAIProvider:
 
     @staticmethod
     def _first_symbol(user_content: str) -> str:
-        match = _SYMBOL_RE.search(user_content)
-        return match.group(0) if match else "TokenService"
+        # Prefer technical identifiers from the incident itself (the <incident> block)
+        # over arbitrary text in retrieved evidence. Evidence may legitimately contain
+        # product/namespace words (e.g. a demo runbook mentioning "ChangeLens") that are
+        # NOT resolvable symbols in the repository; proposing them would make the
+        # get_dependency_paths tool return nothing and the loop could never advance.
+        incident_block = re.search(r"<incident>.*?</incident>", user_content, re.DOTALL)
+        haystacks = [incident_block.group(0)] if incident_block else []
+        haystacks.append(user_content)
+        for haystack in haystacks:
+            match = _SYMBOL_RE.search(haystack)
+            if match:
+                return match.group(0)
+        return "TokenService"
 
     @staticmethod
     def _incident_title(user_content: str) -> str | None:

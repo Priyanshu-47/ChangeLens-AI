@@ -14,6 +14,7 @@ using ChangeLens.Infrastructure.Options;
 using ChangeLens.Infrastructure.Persistence;
 using ChangeLens.Infrastructure.Seeding;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -188,6 +189,16 @@ app.MapGet("/health", () => Results.Ok(new
 }));
 
 app.MapControllers();
+
+// Phase 10 clean-start: docker compose applies EF migrations on startup (gated by
+// Db:ApplyMigrationsOnStartup, enabled in compose; local devs migrate explicitly).
+// This makes `docker compose up` on an empty volume a working seeded demo.
+if (builder.Configuration.GetValue<bool>("Db:ApplyMigrationsOnStartup"))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
+}
 
 if (builder.Configuration.GetValue<bool>("Seed:Enabled"))
 {

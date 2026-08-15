@@ -1,5 +1,8 @@
-bin
-obj
+# Build-context hygiene. **/bin and **/obj are critical: local (Windows) builds
+# leave obj/project.assets.json referencing the Visual Studio NuGet fallback
+# folder, which breaks the Linux publish step if it leaks into the context.
+**/bin
+**/obj
 *.user
 *.suo
 .vs
