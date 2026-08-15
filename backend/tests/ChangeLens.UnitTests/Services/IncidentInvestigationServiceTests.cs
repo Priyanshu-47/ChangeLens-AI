@@ -234,6 +234,67 @@ public sealed class IncidentInvestigationServiceTests : ServiceTestBase
             () => Service.GetStatusAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
+    // ── list (Phase 6: dashboard + trace views) ───────────────────────────────
+
+    [Fact]
+    public async Task List_ReturnsOnlyTheProjectsRuns_WithFilters()
+    {
+        var incidentId = await CreateIncidentAsync();
+        var projectId = Context.Set<ChangeLens.Domain.Incidents.Incident>().Single(i => i.Id == incidentId).ProjectId;
+
+        var queued = await Service.SubmitAsync(incidentId, new InvestigateIncidentRequest { RequestId = "k-1" }, CancellationToken.None);
+        var failed = await Service.SubmitAsync(incidentId, new InvestigateIncidentRequest { RequestId = "k-2" }, CancellationToken.None);
+
+        var runQueued = Context.Set<AnalysisRun>().Single(r => r.Id == queued.AnalysisId);
+        runQueued.Status = AnalysisStatus.Succeeded;
+        runQueued.Model = "mock";
+        runQueued.ResultSchemaVersion = "incident-v1";
+
+        var runFailed = Context.Set<AnalysisRun>().Single(r => r.Id == failed.AnalysisId);
+        runFailed.Status = AnalysisStatus.Failed;
+        runFailed.FailureCode = AnalysisFailureCode.LlmRateLimited;
+        runFailed.Error = "The AI provider is rate limited.";
+        await Context.SaveChangesAsync(CancellationToken.None);
+
+        // All runs for the project.
+        var all = await Service.ListAsync(projectId, null, null, null, 1, 20, CancellationToken.None);
+        Assert.Equal(2, all.Total);
+
+        // Status filter.
+        var succeeded = await Service.ListAsync(projectId, null, AnalysisStatus.Succeeded, null, 1, 20, CancellationToken.None);
+        Assert.Equal(1, succeeded.Total);
+        Assert.Equal(AnalysisStatus.Succeeded, succeeded.Items[0].Status);
+        Assert.Equal("mock", succeeded.Items[0].Model);
+
+        // Type + incident filter.
+        var incidentFiltered = await Service.ListAsync(projectId, "IncidentInvestigation", null, incidentId, 1, 20, CancellationToken.None);
+        Assert.Equal(2, incidentFiltered.Total);
+
+        var wrongType = await Service.ListAsync(projectId, "ChangeRisk", null, null, 1, 20, CancellationToken.None);
+        Assert.Equal(0, wrongType.Total);
+
+        // Failed items expose the safe error representation.
+        var failedItem = all.Items.Single(i => i.Id == failed.AnalysisId);
+        Assert.Equal(AnalysisStatus.Failed, failedItem.Status);
+        Assert.NotNull(failedItem.Error);
+        Assert.Equal(AnalysisFailureCode.LlmRateLimited, failedItem.Error!.Code);
+    }
+
+    [Fact]
+    public async Task List_NonMember_Gets404()
+    {
+        var incidentId = await CreateIncidentAsync();
+        var projectId = Context.Set<ChangeLens.Domain.Incidents.Incident>().Single(i => i.Id == incidentId).ProjectId;
+        var outsider = FakeCurrentUser.Standard();
+
+        var ex = await Assert.ThrowsAsync<NotFoundException>(
+            () => new IncidentInvestigationService(
+                Context, Access, outsider, Audit, _queue, NullLogger<IncidentInvestigationService>.Instance)
+                .ListAsync(projectId, null, null, null, 1, 20, CancellationToken.None));
+
+        Assert.Equal("not_found", ex.Code);
+    }
+
     private sealed class FakeJobQueue : IAnalysisJobQueue
     {
         public bool Accept { get; set; } = true;

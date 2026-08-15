@@ -39,7 +39,7 @@ flowchart LR
 | --- | --- | --- |
 | **React SPA** | Dashboard, change analysis, incident investigation, dependency graph, evidence inspection, AI evaluation + trace views | Business logic, direct AI calls, persistence |
 | **ASP.NET Core API** | Identity (JWT), role + project authorization, projects/repositories/incidents/deployments domain, **change parsing + static analysis (Roslyn)**, **dependency graph computation**, **API contract extraction**, workflow orchestration (A & B), evidence assembly, app-schema persistence, audit log, AI run metadata | Embeddings, vector search, LLM calls, document chunking |
-| **FastAPI AI Service** | Document ingestion + **semantic chunking** (tree-sitter / structure-aware), embeddings, **hybrid retrieval** (vector + keyword + metadata), reranking, **structured LLM reasoning**, tool-call proposals (Phase 6), evaluation runs, ai-schema persistence | Domain truth, authn/authz, orchestration, persistence of business entities |
+| **FastAPI AI Service** | Document ingestion + **semantic chunking** (tree-sitter / structure-aware), embeddings, **hybrid retrieval** (vector + keyword + metadata), reranking, **structured LLM reasoning**, tool-call proposals (Phase 7), evaluation runs, ai-schema persistence | Domain truth, authn/authz, orchestration, persistence of business entities |
 | **PostgreSQL + pgvector** | Single local database, two schemas (see §6) | — |
 | **Gemini API** | Text generation with structured outputs (`responseSchema`), embeddings | — |
 
@@ -101,6 +101,10 @@ sequenceDiagram
 ```
 
 Both workflows share the same backbone: **deterministic preprocessing in .NET → hybrid retrieval in the AI service → one structured LLM call over an evidence package → schema validation → persistence with evidence links and full AI-run metadata.**
+
+### Frontend (Phase 6)
+
+The React SPA (`frontend/`, Vite + TS strict + React Router, no Redux/Next) implements both workflows against the real API. The API client is the single HTTP boundary (bearer auth, `X-Correlation-ID`, uniform error mapping); `AuthContext`/`ProtectedRoute` gate the shell and `ProjectContext` scopes the UI to the selected project — the backend remains the authorization authority for every request. Incident investigation is async: the detail page submits `POST …/investigate` (202), navigates to `/analyses/{id}`, and `useAnalysisPolling` polls (2.5s, stops on Succeeded/Failed, cleans up on unmount). The result page enforces the product's core distinction visually — **evidence** (retrievable artifacts) vs **analysis** (AI inference) — with expandable root-cause candidates whose `evidenceIds` chips scroll to and focus the matching evidence card, a grounding badge shown exactly as the backend computed it, and a separate **unknowns** section. All numbers (counts, confidence, latency, validation status) come from the API; nothing is fabricated client-side.
 
 ## 5. Service boundaries and contracts
 
