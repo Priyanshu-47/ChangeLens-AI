@@ -17,4 +17,11 @@ public interface IAiServiceClient
     /// </summary>
     Task<ChangeRiskAnalysisResponse> AnalyzeChangeRiskAsync(
         AnalyzeChangeRiskRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Runs the structured incident investigation (POST /internal/v1/analysis/incident)
+    /// and returns the already-validated result plus usage metadata.
+    /// </summary>
+    Task<IncidentAnalysisResponseDto> AnalyzeIncidentAsync(
+        IncidentAnalysisRequestDto request, CancellationToken ct);
 }

@@ -26,40 +26,45 @@
 **Goal:** the change-intelligence engine: Roslyn change analysis + dependency graph feeding retrieval and grounded risk reports (Workflow A).
 **Deliverables:** Roslyn analyzer in `ChangeLens.Infrastructure` (symbol model, dependency edges: CALLS / REFERENCES_TYPE / IMPLEMENTS / INHERITS, in-memory `DependencyGraph` — [ADR-0011](adr/0011-static-analysis-vs-chunking.md)); symbol-level change analysis (added/removed/modified symbols, configurable impact traversal `IMPACT_MAX_DEPTH=2`, API impact, external-integration impact); safe local-git change source (path traversal + revision validation, fixed argument list, no shell — never executes repository code); `ChangeRiskAnalysisService` rewrite (Roslyn → graph → enriched AI request → hybrid retrieval → grounded report); `analysis_runs` persistence (status, model, prompt version, retrieval config); AI service dependency retrieval leg (vector + keyword + metadata + dependency → RRF), change-model prompt rendering with stable `symbol:`/`dependency:` evidence ids, context budgets (`MAX_EVIDENCE_CHUNKS`/`MAX_CHARS_PER_CHUNK`/token cap), `gemini-embedding-2` (768-dim) embedding default; demo scenario (an uncommitted signing-key follow-up change in `TokenService` that the analyzer resolves against git HEAD); Roslyn + retrieval + API + security tests; docs updated.
 **Exit:** change → Roslyn → dependency graph → retrieval → mock AI → grounded validated result passes end-to-end; deterministic Roslyn/graph/change tests pass; retrieval preserves project isolation; grounding validator unchanged (unknown evidence ids still fail); demo scenario produces real changed/impacted symbols + dependency paths (verified 2026-08-15); 111 .NET unit + 47 .NET integration + 97 Python unit + 12 Python DB tests green. Real-Gemini validation (2026-08-15) added a responseSchema normalizer (the API rejects `$ref`/`$defs`/`enum`) and an embedding-batching fix, verified by unit tests + live embedding smoke; the live text smoke is quota-gated (20 free-tier text requests/day for the configured model).
-**Deferred (explicitly NOT in Phase 4):** Workflow B (incident investigation end-to-end), the async job runner (202 + poll, [ADR-0009](adr/0009-async-analysis-jobs.md)), reranker, agent tool loop, GitHub webhooks, Neo4j/Redis/Kafka — all documented for later phases. No measured accuracy metrics exist yet; evaluation is Phase 7.
+**Deferred (explicitly NOT in Phase 4):** Workflow B was delivered in Phase 5; reranker, agent tool loop, GitHub webhooks, Neo4j/Redis/Kafka remain for later phases. No measured accuracy metrics exist yet; evaluation is Phase 8.
 
-## Phase 5 — React UI
+## Phase 5 — Incident Investigation + Async Analysis ✅
+**Goal:** the second core workflow (Workflow B) and the async job runner ([ADR-0009](adr/0009-async-analysis-jobs.md)) — pull incident investigation forward because the UI needs it and the async pattern is shared infrastructure.
+**Deliverables:** `AnalysisRun` extended for incidents (incidentId, requestId, queuedAt, result JSONB, failureCode, result schema version) + `AddIncidentAnalysis` migration; explicit job state machine `Queued → Running → Succeeded | Failed` (`AnalysisRun.TransitionTo`, invalid transitions rejected); bounded in-process job queue (`AnalysisJobQueue`, `Channel` with capacity, no Redis/Kafka) + `AnalysisWorker` BackgroundService with configurable concurrency (`Analysis:MaxConcurrency`, default 2) and graceful shutdown; `IncidentInvestigationOrchestrator` (worker-side: state transitions, bounded transient retries 429/504/502, per-job timeout `JobTimeoutSeconds`, audit AnalysisStarted/Completed/Failed); `POST /api/v1/incidents/{id}/investigate` → 202 `{ analysisId, status, statusUrl }` with request-id idempotency (reuse outstanding run; fresh run after terminal state) and `GET /api/v1/analyses/{id}` polling (validated result when Succeeded, safe `{ code, message }` when Failed); normalized incident context builder (title/severity/service/env/timeline/symptoms/knownFacts/unknowns — no fabricated telemetry); AI service `POST /internal/v1/analysis/incident` (server-side retrieval queries from the incident context preserving exact identifiers, layered `incident-v1` prompt, `rootCauseCandidates[]` with per-candidate evidenceIds + confidence + reasoning + unknowns, `remediation` with insufficientEvidence flag, top-level `unknowns`, deterministic incident grounding rule — empty/unknown evidence ids rejected); MockAIProvider incident support; queue-full → `Failed(QUEUE_FULL)`; unit tests (queue, state machine, service, orchestrator, retries, timeout, idempotency, authorization), integration tests (real PostgreSQL: 202 → worker → mock AI → grounded result → COMPLETED, cross-project isolation, Viewer 403, non-member 404), docs updated.
+**Exit:** incident → context → hybrid retrieval → mock AI → grounded root-cause candidates end-to-end via the real API; state transitions, retries, timeout, QUEUE_FULL and cross-project isolation covered by tests; zero Gemini calls in the normal suite; 144 .NET unit + 51 .NET integration + 118 Python unit + 12 Python DB tests green — all verified 2026-08-15.
+
+## Phase 6 — React UI
 **Goal:** a polished product surface.
 **Deliverables:** Vite + React + TS + React Router; shadcn/ui + Tailwind; dashboard; change analysis view (risk factors, evidence panel, recommended tests); incident investigation view (timeline, candidates with evidence/unknowns); dependency graph (React Flow); typed API client generated from OpenAPI.
 **Exit:** S1/S2/S3 user stories demonstrable against the running stack; responsive, no placeholder screens.
 
-## Phase 6 — Agent Tools
+## Phase 7 — Agent Tools
 **Goal:** controlled, audited tool use — not "multi-agent theater".
 **Deliverables:** tool registry + schemas in .NET; tool-call proposal loop via AI service; execution with validation/authorization/timeout/retry/audit; `tool_calls` trace in `analysis_runs`; UI toggle to inspect tool activity.
 **Exit:** investigation can propose+execute e.g. `search_incidents`, `get_deployment`, `get_logs`; rejected/unauthorized calls are audited; no tool runs without backend authorization.
 
-## Phase 7 — Evaluation
+## Phase 8 — Evaluation
 **Goal:** measured, honest numbers.
-**Deliverables:** golden dataset (15–25 cases: changes, incidents, expected impacted components, expected related incidents, expected tests); eval runner comparing keyword-only vs vector-only vs hybrid vs full pipeline; metrics (Recall@K, precision, MRR, groundedness, hallucination rate, latency, tokens, estimated cost, schema-validation failures) persisted in `evaluation_runs`; evaluation dashboard; eval-as-regression-gate in CI (Phase 9).
+**Deliverables:** golden dataset (15–25 cases: changes, incidents, expected impacted components, expected related incidents, expected tests); eval runner comparing keyword-only vs vector-only vs hybrid vs full pipeline; metrics (Recall@K, precision, MRR, groundedness, hallucination rate, latency, tokens, estimated cost, schema-validation failures) persisted in `evaluation_runs`; evaluation dashboard; eval-as-regression-gate in CI (Phase 10).
 **Exit:** the dashboard displays only real run results; a strategy comparison shows which retrieval mode wins on this dataset.
 
-## Phase 8 — Observability + Security Hardening
+## Phase 9 — Observability + Security Hardening
 **Goal:** production-grade traces and controls.
 **Deliverables:** AI run trace view (model, prompt version, retrieval queries/docs, tool calls, tokens, cost, validation/guardrail status); structured logging review; rate limiting; audit-log UI; guardrail pass on all LLM paths; secrets hygiene pass.
 **Exit:** any analysis is fully explainable from the trace view; red-team pass on prompt-injection scenarios documented.
 
-## Phase 9 — Docker + CI/CD
+## Phase 10 — Docker + CI/CD
 **Goal:** `docker compose up` for everyone.
 **Deliverables:** four-service compose (frontend/backend/ai-service/postgres) with healthchecks + volumes + non-root; GitHub Actions: lint → unit → integration → security scan → AI evaluation (regression gate) → docker build; README quick-start.
 **Exit:** clean machine + `docker compose up` = working demo with seeded data; CI green.
 
-## Phase 10 — AWS (only when local is stable)
+## Phase 11 — AWS (only when local is stable)
 **Goal:** modular, cost-estimated deployment.
 **Deliverables:** Terraform modules per service; cost estimate reviewed before provisioning; S3/CloudFront frontend; Fargate backend + AI service; managed PostgreSQL decision; SQS optional; Secrets Manager; Cognito seam; CloudWatch; architecture diagrams updated; known-limitations doc extended.
 **Exit:** deployed demo meets the cost estimate agreed in advance; local remains the source of truth.
 
 ## Sequencing notes
 - **Phase 1 and 2 can be built in parallel** (different repos, contract agreed in Phase 0) — this is the only planned parallelism; it shrinks the first milestone.
-- The **async job runner (Phase 4)** is built before the UI so the UI never blocks on AI latency.
-- **Evaluation data is curated from Phase 3 onward** (retrieval traces are its raw material), even though the runner lands in Phase 7.
+- The **async job runner (Phase 5)** was built before the UI so the UI never blocks on AI latency (delivered with the incident workflow).
+- **Evaluation data is curated from Phase 3 onward** (retrieval traces are its raw material), even though the runner lands in Phase 8.
 - Anything discovered that contradicts these docs produces a doc change first (ADR if architectural), then code.

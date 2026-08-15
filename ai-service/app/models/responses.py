@@ -139,6 +139,74 @@ class RiskAnalysisResponse(ApiModel):
     usage: AnalysisUsage
 
 
+# --- incident investigation (Phase 5, brief §17–20) ---
+
+
+class CandidateStatus(str, Enum):
+    CANDIDATE = "Candidate"
+    CONFIRMED = "Confirmed"
+    DISMISSED = "Dismissed"
+
+
+class RootCauseCandidate(ApiModel):
+    """One root-cause hypothesis. Grounded: must reference >=1 real evidence id.
+
+    The service enforces the grounding rule deterministically after Pydantic
+    validation (brief §17): empty evidence_ids is rejected, and every id must exist
+    in the evidence index. The model is told to prefer hypotheses over a single
+    definitive root cause unless the evidence supports it.
+    """
+
+    candidate_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=2000)
+    confidence: float = Field(ge=0.0, le=1.0)
+    status: CandidateStatus = CandidateStatus.CANDIDATE
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    reasoning: str | None = Field(default=None, max_length=4000)
+    unknowns: list[str] = Field(default_factory=list, max_length=10)
+
+
+class Remediation(ApiModel):
+    """Operational guidance, grounded in evidence (brief §18).
+
+    When evidence is insufficient the model must set insufficient_evidence=True and
+    keep the free-text fields minimal — never invent operational procedures.
+    """
+
+    immediate_mitigation: str | None = Field(default=None, max_length=2000)
+    investigation_steps: list[str] = Field(default_factory=list, max_length=20)
+    recommended_remediation: str | None = Field(default=None, max_length=4000)
+    validation_steps: list[str] = Field(default_factory=list, max_length=20)
+    rollback_consideration: str | None = Field(default=None, max_length=2000)
+    insufficient_evidence: bool = False
+
+
+class IncidentEvidenceItem(ApiModel):
+    """An evidence item the investigation conclusions are grounded in."""
+
+    id: str = Field(min_length=1, max_length=500)
+    type: EvidenceType = EvidenceType.Document
+    source: str | None = Field(default=None, max_length=1000)
+    summary: str | None = Field(default=None, max_length=2000)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class IncidentAnalysisResult(ApiModel):
+    """Validated structured investigation (ADR-0007). Never returned unvalidated."""
+
+    root_cause_candidates: list[RootCauseCandidate] = Field(default_factory=list, max_length=10)
+    remediation: Remediation = Remediation()
+    unknowns: list[str] = Field(default_factory=list, max_length=25)
+    evidence: list[IncidentEvidenceItem] = Field(default_factory=list, max_length=50)
+
+
+class IncidentAnalysisResponse(ApiModel):
+    analysis_type: Literal["incident"] = "incident"
+    result: IncidentAnalysisResult
+    usage: AnalysisUsage
+
+
 # --- retrieval / ingestion ---
 
 

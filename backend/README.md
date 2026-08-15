@@ -1,6 +1,6 @@
 # backend — ChangeLens API (ASP.NET Core 10)
 
-> **Phase 4 — complete (change intelligence).** ASP.NET Core 10 Web API foundation: Identity + JWT auth, project-level authorization, projects/repositories/services/incidents, audit log, health checks, Swagger/OpenAPI, EF Core migrations against PostgreSQL — plus a typed client for the Python AI service and the `POST /api/v1/analyses/change-risk` slice, which since Phase 3 is **RAG-fed** (AI service auto-retrieval) and since Phase 4 runs the **change-intelligence engine**: a Roslyn analyzer + dependency graph, symbol-level change analysis with impact traversal (API + external-integration impact), a safe local-git change source, and `analysis_runs` persistence. 158 tests (111 unit + 47 integration).
+> **Phase 5 — complete (incident investigation + async analysis).** ASP.NET Core 10 Web API foundation: Identity + JWT auth, project-level authorization, projects/repositories/services/incidents, audit log, health checks, Swagger/OpenAPI, EF Core migrations against PostgreSQL — plus a typed client for the Python AI service and the `POST /api/v1/analyses/change-risk` slice, which since Phase 3 is **RAG-fed** (AI service auto-retrieval) and since Phase 4 runs the **change-intelligence engine**: a Roslyn analyzer + dependency graph, symbol-level change analysis with impact traversal (API + external-integration impact), a safe local-git change source, and `analysis_runs` persistence. Phase 5 adds the **async job system** (bounded in-process queue + background worker, `Queued → Running → Succeeded | Failed` state machine, idempotency keys, retries, timeouts) and the **incident investigation workflow** (`POST /incidents/{id}/investigate` → `202` + `GET /analyses/{id}` polling). 195 tests (144 unit + 51 integration).
 
 The orchestrator of ChangeLens AI: it owns authentication, the domain model, workflow orchestration (later phases), persistence (`app` schema), and the audit trail. It never calls Gemini directly — the Python AI service is its only AI-facing dependency (`.NET → FastAPI → Gemini`).
 
@@ -39,6 +39,12 @@ Phase 1 uses ASP.NET Core configuration: `appsettings.json` + `appsettings.Devel
 | `Ai__BaseUrl` | yes (analyses) | `http://localhost:8000` in Development | Python AI service base URL (compose: `http://ai-service:8000`) |
 | `Ai__ApiKey` | yes (analyses) | dev placeholder | Internal shared key sent as `X-Internal-Key` — **must be a real secret outside Development** |
 | `Ai__TimeoutSeconds` | no | 120 | Backend-side HTTP timeout for one analysis call |
+| `Analysis__QueueCapacity` | no | 100 | Bounded async job queue capacity (Phase 5) |
+| `Analysis__MaxConcurrency` | no | 2 | Max concurrent AI analyses — caps free-tier spend |
+| `Analysis__JobTimeoutSeconds` | no | 600 | Per-job timeout; a run can never stay Running forever |
+| `Analysis__MaxRetries` | no | 2 | Transient AI failure retries (429/504/502 only; bounded backoff) |
+| `Analysis__RetryBackoffSeconds` | no | 5 | Base backoff (exponential, capped at 30s) |
+| `Analysis__RecoverOnStartup` | no | `true` | Mark interrupted Running runs failed + re-enqueue Queued runs |
 | `Seed__Enabled` | no | `true` in Development | Seeds roles + demo users |
 
 Demo users (Development seed, dev-only passwords):
@@ -119,12 +125,28 @@ cd backend/src/ChangeLens.Api && AI__ApiKey=change-me-internal-key dotnet run
 | POST/GET | `/api/v1/incidents` | Create (with optional timeline events) / list (filters) |
 | GET/PATCH | `/api/v1/incidents/{incidentId}` | Detail incl. timeline / update |
 | POST | `/api/v1/incidents/{incidentId}/events` | Append a timeline event |
+| POST | `/api/v1/incidents/{incidentId}/investigate` | **Phase 5:** submit an async incident investigation (Engineer+) → `202 { analysisId, status, statusUrl }`; optional `requestId` for idempotency |
+| GET | `/api/v1/analyses/{analysisId}` | **Phase 5:** poll a job — `Queued/Running/Succeeded/Failed`; validated result only when Succeeded; safe `error { code, message }` when Failed |
 | GET | `/api/v1/audit-logs?projectId=` | Audit trail (Owner/Admin) |
-| POST | `/api/v1/analyses/change-risk` | **Phase 2 slice:** change-risk analysis via the AI service (Engineer+). Synchronous 200 today; becomes 202 + poll in Phase 4 |
+| POST | `/api/v1/analyses/change-risk` | **Phase 2/4 slice:** change-risk analysis via the AI service (Engineer+), synchronous 200 |
 | GET | `/health`, `/api/v1/health` | Liveness / full health (unauthenticated) |
 
 Errors use the uniform envelope: `{ type, title, status, detail, traceId, code }` (+ `details` for AI validation failures). See [docs/api-contract.md](../docs/api-contract.md).
 
 ## Current phase
 
-Phase 3 of 10. See [docs/development-sequence.md](../docs/development-sequence.md). Phase 3 (hybrid RAG) lives in the Python AI service — see [ai-service/README.md](../ai-service/README.md). Not yet implemented: change parsing/dependency analysis + async job runner + result persistence (Phase 4), React UI (Phase 5), agent tools (Phase 6), evaluation (Phase 7), observability/rate limiting (Phase 8), CI/CD (Phase 9).
+Phase 5 of 11. See [docs/development-sequence.md](../docs/development-sequence.md). Phase 3 (hybrid RAG) and Phase 5 (incident investigation) live in the Python AI service — see [ai-service/README.md](../ai-service/README.md). Not yet implemented: React UI (Phase 6), agent tools (Phase 7), evaluation (Phase 8), observability/rate limiting (Phase 9), CI/CD (Phase 10).
+
+## Async analysis jobs (Phase 5)
+
+`POST /api/v1/incidents/{incidentId}/investigate` → `202 Accepted` → background worker → `GET /api/v1/analyses/{analysisId}`. Details:
+
+- **Queue:** bounded in-process `Channel` (`AnalysisJobQueue`); no Redis/Kafka. A full queue persists the run as `Failed(QUEUE_FULL)` — never silently dropped.
+- **Worker:** `AnalysisWorker` (`BackgroundService`), concurrency = `Analysis:MaxConcurrency` (default 2), graceful shutdown, per-job DI scope.
+- **States:** `Queued → Running → Succeeded | Failed` enforced by `AnalysisRun.TransitionTo`; invalid transitions throw.
+- **Retries:** transient AI failures (429/504/502) only, bounded exponential backoff; 422 validation failures never retried.
+- **Timeout:** `Analysis:JobTimeoutSeconds` (default 600s) — a run can never stay Running forever (`JOB_TIMEOUT`).
+- **Idempotency:** a client `requestId` reuses an outstanding run for the same project; a new investigation after a terminal state starts a fresh run.
+- **Persistence:** result stored as JSONB (`analysis_runs.ResultJson`, schema `incident-v1`), with model, prompt version, retrieval snapshot, failure code/message, and queued/started/completed timestamps.
+- **Audit:** `AnalysisRequested` / `AnalysisStarted` / `AnalysisCompleted` / `AnalysisFailed`.
+- **Known Gemini limitation:** the real text provider rejects the current structured-output schema (HTTP 400) — the same `api_safe_schema` issue documented at the end of Phase 4's validation. Phase 5 tests use `MockAIProvider`; live Gemini incident analysis is not claimed to work until that is resolved.

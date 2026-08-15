@@ -11,7 +11,7 @@ The MVP needs authentication (users, logins), role-based authorization (Admin/En
 
 - **Authentication:** ASP.NET Core Identity (local accounts) issuing JWT bearer tokens. HS256 dev signing key from env; rotation supported; managed secrets on AWS later.
 - **Authorization:** role policies (Admin, Engineer, Viewer) + a custom `IAuthorizationHandler` for project membership (`project_members` table, role per project). Enforcement is layered: policy handler **and** project-id filter in every data-layer query.
-- **Seam for later:** identity sits behind a boundary (auth endpoints + claims principal only), so Cognito/Entra can replace local Identity at Phase 10 without touching domain code.
+- **Seam for later:** identity sits behind a boundary (auth endpoints + claims principal only), so Cognito/Entra can replace local Identity at Phase 11 without touching domain code.
 
 ## Consequences
 

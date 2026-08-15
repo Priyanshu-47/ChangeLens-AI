@@ -9,7 +9,7 @@ The product spans three runtimes (React SPA, ASP.NET Core API, Python AI service
 
 ## Decision
 
-Use a single Git repository containing `frontend/`, `backend/`, `ai-service/`, `docker/`, `docs/`, and `data/`. Each directory is independently deployable, but the repo is versioned as one unit. CI (Phase 9) builds and tests each unit and gates on the cross-service contract tests.
+Use a single Git repository containing `frontend/`, `backend/`, `ai-service/`, `docker/`, `docs/`, and `data/`. Each directory is independently deployable, but the repo is versioned as one unit. CI (Phase 10) builds and tests each unit and gates on the cross-service contract tests.
 
 ## Consequences
 

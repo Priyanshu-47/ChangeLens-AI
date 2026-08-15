@@ -14,7 +14,7 @@ Evaluation is a product feature, not an internal script:
 - **Golden dataset** versioned in `data/` (15–25 MVP cases): code changes, incidents, expected impacted components, expected related incidents, expected test scenarios, expected root-cause candidates.
 - **Runner** (`POST /internal/v1/evaluations/run`) executes strategies against the dataset with a `limit` guard; results persist in `evaluation_runs` + the ai schema and are exposed via the public API.
 - **Metrics measured, never invented:** Recall@K, precision, MRR, groundedness, hallucination rate, latency, token usage, estimated cost, schema-validation failures — each labeled with dataset size and date.
-- **Comparison view** (Phase 7 UI) shows strategy-vs-strategy results; CI (Phase 9) runs evaluation as a regression gate on prompt/model changes (offline strategies in CI, real-LLM slice optional/manual).
+- **Comparison view** (Phase 8 UI) shows strategy-vs-strategy results; CI (Phase 10) runs evaluation as a regression gate on prompt/model changes (offline strategies in CI, real-LLM slice optional/manual).
 
 ## Consequences
 

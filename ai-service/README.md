@@ -1,6 +1,6 @@
 # ai-service — Python FastAPI AI Service
 
-> **Phase 3 — complete.** FastAPI + Gemini structured-output service with hybrid RAG: provider abstraction, versioned layered prompts, Pydantic validation with bounded repair and safe failure, grounding enforcement, correlation-id tracing, internal-key auth, mock providers for $0 dev/tests, idempotent ingestion, structure-aware chunking, pgvector embeddings, and RRF hybrid retrieval feeding the analysis pipeline.
+> **Phase 5 — complete.** FastAPI + Gemini structured-output service with hybrid RAG: provider abstraction, versioned layered prompts, Pydantic validation with bounded repair and safe failure, grounding enforcement, correlation-id tracing, internal-key auth, mock providers for $0 dev/tests, idempotent ingestion, structure-aware chunking, pgvector embeddings, and RRF hybrid retrieval feeding the analysis pipeline — including the Phase 5 **incident investigation** endpoint (`/internal/v1/analysis/incident`) with server-side retrieval-query generation, `rootCauseCandidates[]` grounding, and explicit unknowns.
 
 The AI capability provider of ChangeLens. It owns AI integration (providers, prompts, structured output, AI-specific validation) and the `ai` schema (ingestion, embeddings, retrieval). It **never** owns users, projects, incidents, authorization, or business state; the ASP.NET backend is the only client ([docs/ai-service-boundary.md](../docs/ai-service-boundary.md), [ADR-0002](../docs/adr/0002-service-boundary.md)).
 
@@ -23,7 +23,9 @@ ASP.NET Core  ── POST /internal/v1/analysis/risk (X-Internal-Key, X-Correlat
                                               └── MockAIProvider  (deterministic, AI_PROVIDER=mock)
 ```
 
-The pipeline per analysis: change request → **hybrid retrieval (auto)** → evidence package (`chunk:<uuid>` ids) → layered prompt → provider call → Pydantic validation → deterministic post-checks (confidence bounds, array caps, **grounding rule**) → success, or bounded repair (max 2) → safe failure (`422 AI_VALIDATION_FAILED`) — unvalidated prose is never returned ([ADR-0007](../docs/adr/0007-structured-output-schema-validation.md)).
+The pipeline per analysis: change/incident request → **hybrid retrieval (auto)** → evidence package (`chunk:<uuid>` ids) → layered prompt → provider call → Pydantic validation → deterministic post-checks (confidence bounds, array caps, **grounding rule**) → success, or bounded repair (max 2) → safe failure (`422 AI_VALIDATION_FAILED`) — unvalidated prose is never returned ([ADR-0007](../docs/adr/0007-structured-output-schema-validation.md)).
+
+Phase 5 adds the **incident pipeline**: normalized incident context (timeline/symptoms/known facts/unknowns — built by the backend, never fabricated) → retrieval queries generated server-side from the context (title, symptom messages, service, symbol-like terms — exact identifiers preserved for the keyword leg) → evidence package → layered `incident-v1` prompt → structured `IncidentAnalysisResult` with `rootCauseCandidates[]` (per-candidate `evidenceIds`, `confidence`, `reasoning`, `unknowns`), `remediation` (with `insufficientEvidence`), top-level `unknowns`, and a deterministic grounding rule: every candidate must cite **at least one** id from the evidence index and every id must exist (empty/unknown ids rejected).
 
 ## Phase 3 subsystems
 
@@ -97,6 +99,7 @@ All config is environment-driven (`pydantic-settings`, validated at startup — 
 | GET | `/internal/v1/health/live` | internal key | Liveness (internal contract) |
 | GET | `/internal/v1/health/ready` | internal key | Readiness (internal contract) |
 | POST | `/internal/v1/analysis/risk` | internal key | Structured change-risk analysis over an evidence package (RAG-fed) |
+| POST | `/internal/v1/analysis/incident` | internal key | **Phase 5:** structured incident investigation (server-side retrieval from the incident context, grounded `rootCauseCandidates[]`) |
 | POST | `/internal/v1/ingest/documents` | internal key | Idempotent ingestion (content + metadata, never filesystem access) |
 | POST | `/internal/v1/retrieval/search` | internal key | Hybrid retrieval: vector + keyword + filters + RRF |
 
@@ -121,7 +124,7 @@ Then from the backend: `POST /api/v1/analyses/change-risk` with a JWT (see [back
 
 ```bash
 cd ai-service
-.venv/Scripts/python -m pytest -q          # 88 tests — ZERO Gemini calls, no API key, no database needed
+.venv/Scripts/python -m pytest -q          # 118 tests — ZERO Gemini calls, no API key, no database needed
 ```
 
 Coverage: config validation, model validation (enums/bounds), grounding rule, prompt layering + injection sanitizer, bounded repair + safe failure, retry semantics, error mapping, HTTP contract (auth, correlation, envelopes), structure-aware chunkers, RRF determinism, mock-embedding determinism + similarity, content hashing.
@@ -130,7 +133,7 @@ The **PostgreSQL integration suite** (pgvector required — idempotency, content
 
 ```bash
 TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
-  .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # 8 tests
+  .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # 12 tests
 ```
 
 Optional **live Gemini smoke tests** (one structured-output call + one embedding call — off by default, protects free-tier quota):
@@ -162,14 +165,13 @@ Migrations touch the `ai` schema only (ADR-0003); the `app` schema belongs to .N
 
 `app/providers/base.py` defines the `IAIProvider` protocol; `GeminiProvider` is the MVP adapter and `MockAIProvider` the deterministic stand-in. The analysis service depends only on the protocol, so an `OpenAIProvider`/`BedrockProvider` can be added without touching orchestration or validation ([ADR-0005](../docs/adr/0005-llm-provider-abstraction.md)). Embeddings use the separate `IEmbeddingProvider` protocol (`app/embeddings/base.py`, ADR-0006) with `GeminiEmbeddingProvider` and `MockEmbeddingProvider` implementations.
 
-## Known limitations (Phase 3)
+## Known limitations (Phase 5)
 
 - **No reranker** — intentionally not implemented (MVP = RRF; revisit only if evaluation shows RRF insufficient, docs/rag-architecture.md §4).
-- **No dependency-relationship retrieval leg** — the evidence-id interface exists, but the dependency contribution is empty until the Roslyn analyzer populates it (Phase 4).
-- **No analysis persistence** — `analysis_runs` and result tables are Phase 4 (backend).
-- **Incident investigation** (`/internal/v1/analysis/incident`) is Phase 4.
-- **Structured incident fields, OpenAPI/JSON/YAML chunkers, identifier-aware tokenizer** for the keyword leg — deferred to Phase 4; unknown document types fall back to heading sections / one file chunk today.
-- **No measured retrieval accuracy** — the golden dataset (`data/golden-dataset/cases.json`) defines targets; the evaluation runner lands in Phase 7.
+- **Gemini structured-output gap** — the real text provider returns HTTP 400 for the current `responseSchema` shapes (the `api_safe_schema` normalizer fixed `$ref`/`$defs`/`enum` for the flash model, but `gemini-3.1-flash-lite` rejects the schema shape; the same applies to the new incident schema). Phase 5 tests use `MockAIProvider`; live Gemini text calls are quota-gated and NOT claimed to work until resolved.
+- **Incident retrieval queries are heuristic** — title + symptoms + service + symbol-like terms; the per-leg trace persistence for evaluation lands in Phase 8.
+- **No measured retrieval accuracy** — the golden dataset (`data/golden-dataset/cases.json`) defines targets; the evaluation runner lands in Phase 8.
+- **Structured incident fields, OpenAPI/JSON/YAML chunkers, identifier-aware tokenizer** for the keyword leg — deferred; unknown document types fall back to heading sections / one file chunk today.
 - The `app` schema is never touched by this service (ADR-0003).
 
 ## Key references

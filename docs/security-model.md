@@ -1,6 +1,6 @@
 # Security Model
 
-> Phase 0 deliverable (updated Phase 1). Threat focus, authentication, authorization, prompt-injection defense, secrets, validation, and audit. **Phase 1 implements:** Identity + JWT, RBAC + project-level authorization (404 for invisible projects, 403 for insufficient roles, global-Admin bypass), DataAnnotations + service validation, payload limits, uniform ProblemDetails errors, and an append-only audit trail (auth events + mutations). Deferred to later phases: rate limiting (8), prompt-injection guardrails (2/8), mTLS between services (10), external IdP (10).
+> Phase 0 deliverable (updated Phase 5). Threat focus, authentication, authorization, prompt-injection defense, secrets, validation, and audit. **Phase 1 implements:** Identity + JWT, RBAC + project-level authorization (404 for invisible projects, 403 for insufficient roles, global-Admin bypass), DataAnnotations + service validation, payload limits, uniform ProblemDetails errors, and an append-only audit trail (auth events + mutations). **Phase 5 adds:** async analysis authorization (submit = Write, poll = Read), cross-project isolation for analyses, safe job failure states, and analysis lifecycle audit events. Deferred to later phases: rate limiting (9), prompt-injection guardrails (2/9), mTLS between services (11), external IdP (11).
 
 ## 1. Threat focus (what this system must defend)
 
@@ -12,7 +12,7 @@
 | **Unauthorized AI spend** | Free-tier LLM budget is a real resource | AuthN on all analysis endpoints, rate limiting, eval cost guard |
 | **Tool misuse (Phase 6)** | Tools read code/incidents/deployments | Tool schemas + per-call authorization + audit in .NET; AI service only proposes |
 | **Abuse of public endpoints** | Registration, ingestion payloads | Validation, payload limits, rate limiting, file validation |
-| **Supply chain** | Python/C#/npm dependencies | Lockfiles, CI dependency scan (Phase 9) |
+| **Supply chain** | Python/C#/npm dependencies | Lockfiles, CI dependency scan (Phase 10) |
 | **Prompt-injection exfiltration of secrets** | Model could be told to echo env contents | Model never receives secrets; system prompt prohibits; deterministic pre-scan strips env-like tokens from evidence |
 
 ## 2. Authentication (MVP)
@@ -20,12 +20,13 @@
 - **ASP.NET Core Identity** (local accounts) issuing **JWT bearer** tokens; HS256 signing key from env (`JWT__SIGNING_KEY`) for local dev; rotation supported, managed secrets (Secrets Manager) on AWS.
 - Seed accounts: `admin` (Owner), `engineer`, `viewer` — used by demo dataset and integration tests.
 - Passwords hashed with Identity's PBKDF2 (defaults); no plaintext anywhere.
-- AI service is **not** in the user-auth path: it authenticates the backend via `INTERNAL_API_KEY` header + network isolation (compose-internal network; mTLS documented as the Phase 10 hardening).
+- AI service is **not** in the user-auth path: it authenticates the backend via `INTERNAL_API_KEY` header + network isolation (compose-internal network; mTLS documented as the Phase 11 hardening).
 
 ## 3. Authorization
 
 - **Roles:** Admin, Engineer, Viewer (`Owner` project role superset). Implemented as ASP.NET Core policies.
 - **Project-level:** `project_members(project_id, user_id, role)`; a custom `IAuthorizationHandler` resolves the project id from the route/body and checks membership+role. Every project-scoped query additionally filters by `project_id` at the data layer (defense in depth — a handler bug cannot leak data).
+- **Async analyses (Phase 5):** submitting an investigation requires Write (Engineer+); polling an analysis requires Read (Viewer may poll). Non-members get 404 for both the incident and the analysis — cross-project analysis ids are not inferable. The worker re-loads the incident by its id and the AI service hard-filters every retrieval query by `projectId`; a user can never submit an investigation for, or read the result of, another project's analysis (explicit integration test). A full bounded queue never drops a job silently — the run is persisted `Failed(QUEUE_FULL)` and the 202 still returns its id so polling surfaces the truth.
 - **AI service:** enforces the `projectId` filter passed in (validates the backend is scoped); derives nothing itself ([ADR-0002](adr/0002-service-boundary.md)).
 - **Tools (Phase 6):** each tool call is validated against its schema, authorized for the project, executed with timeout/retry limits, and audit-logged — including rejected calls ([ADR-0008](adr/0008-controlled-tool-use.md)).
 
@@ -66,8 +67,10 @@ Concrete rules enforced in the prompt + code:
 
 Append-only `audit_logs` records for: authentication events, all mutating operations, **every tool call (proposed/executed/rejected with reason)**, AI analysis runs (via `analysis_runs`), evaluation runs, member/role changes, and project deletions. Fields: `occurred_at, user_id, action, resource_type, resource_id, ip_address, details`. Audit data is not user-editable via any API.
 
+Async analysis lifecycle (Phase 5) is audited as: `AnalysisRequested` (submit), `AnalysisStarted`, `AnalysisCompleted`, `AnalysisFailed` (worker). Details carry the analysis/incident ids, model, prompt version, validation status, latency, candidate/evidence counts (completed) or the safe failure code + message (failed) — never secrets, raw prompts, or stack traces.
+
 ## 8. What is deliberately deferred (documented, not forgotten)
 
-- mTLS between backend and AI service (Phase 10 AWS hardening; compose network + shared key in MVP).
+- mTLS between backend and AI service (Phase 11 AWS hardening; compose network + shared key in MVP).
 - External IdP / SSO (Cognito/Entra) — Phase 10 note.
-- Secrets rotation automation, full OWASP ASVS pass, dependency scanning in CI (Phase 9), WAF (Phase 10).
+- Secrets rotation automation, full OWASP ASVS pass, dependency scanning in CI (Phase 10), WAF (Phase 11).

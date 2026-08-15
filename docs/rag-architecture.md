@@ -59,7 +59,7 @@ Every search records: normalized queries, applied filters, per-leg top results w
 
 | Limit | Mitigation |
 | --- | --- |
-| pgvector at very large scale (100M+ chunks) | Not an MVP concern; HNSW + filters scale fine to portfolio scale; document migration path to a managed vector store in Phase 10 notes |
+| pgvector at very large scale (100M+ chunks) | Not an MVP concern; HNSW + filters scale fine to portfolio scale; document migration path to a managed vector store in Phase 11 notes |
 | English-centric full-text tokenization for code | Custom identifier tokenizer (camelCase/snake_case splitting) is part of the keyword leg |
 | Chunk boundary artifacts (method split mid-body) | Overlap within method bodies only; chunk_type metadata lets the LLM know it may need adjacent chunks — the backend can fetch siblings on request |
 | Embedding model drift | Model-versioned embeddings + re-index workflow + evaluation detects quality regression before it ships |
@@ -151,13 +151,45 @@ today, verified against `backend/` and `ai-service/`.
   symbols, 2 impacted symbols (incl. the `Program` DI registration), 10 relevant
   dependency edges and 2 dependency paths.
 
+## 9. Phase 5 implementation status (actual, not aspirational)
+
+Phase 5 (commit `feat: implement async incident investigation`) added **Workflow B** and
+the **async job runner** ([ADR-0009](adr/0009-async-analysis-jobs.md)). This section
+records what is real in the code today, verified against `backend/` and `ai-service/`.
+
+**Implemented**
+
+- **Async jobs** (backend): `POST /api/v1/incidents/{id}/investigate` → `202
+  { analysisId, status, statusUrl }`; bounded in-process queue (`AnalysisJobQueue`,
+  `Channel`, capacity + concurrency configurable); `AnalysisWorker` BackgroundService
+  with graceful shutdown; `IncidentInvestigationOrchestrator` enforces `Queued → Running
+  → Succeeded | Failed`, retries only transient AI failures (429/504/502, bounded
+  backoff), applies a per-job timeout (default 600s), persists result JSONB + model +
+  prompt version + retrieval snapshot, and audits the lifecycle. `GET /api/v1/analyses/{id}`
+  polls; request-id idempotency reuses outstanding runs; queue-full persists
+  `Failed(QUEUE_FULL)`.
+- **Incident context** (`IncidentContextBuilder.cs`): normalized context (title, severity,
+  status, environment, service, timestamps, chronological timeline, symptoms from error/log
+  events, known facts, explicit unknowns) — nothing fabricated.
+- **Incident retrieval** (`ai-service/app/services/analysis_service.py`): queries generated
+  server-side from the context (title, symptom/error messages, service, symbol-like
+  CamelCase terms) preserving exact identifiers for the keyword leg; the dependency leg
+  steers by affected service + symbol-like terms. Evidence ids are `chunk:<uuid>` only.
+- **Incident schema + grounding** (`responses.py`, `analysis_service.py`):
+  `rootCauseCandidates[]` (per-candidate `evidenceIds` ≥ 1, `confidence` 0–1, `reasoning`,
+  `unknowns`), `remediation` with `insufficientEvidence`, top-level `unknowns`,
+  `evidence[]`. The deterministic grounding check rejects empty evidence-id lists and
+  unknown ids (Pydantic `min_length=1` + index membership).
+- **Prompt** (`app/llm/prompts/incident_v1.txt`): incident facts → timeline → symptoms →
+  known facts → context unknowns → evidence package → evidence index, with the same
+  layered system/data separation and injection sanitizer as `risk_v1`.
+
 **Deferred (documented here so nobody claims otherwise)**
 
 - Cross-encoder reranker — explicitly NOT implemented (MVP = RRF; revisit only if
   evaluation shows RRF insufficient).
-- Workflow B (incident investigation) end-to-end and the async job runner — later phases.
 - Structured (non-text) incident fields, OpenAPI path-item chunker, JSON/YAML structural
   chunker, and the identifier-aware tokenizer for the keyword leg.
 - Persisting per-leg retrieval queries/ranks into `analysis_runs` for the evaluation
-  engine (Phase 7).
+  engine (Phase 8).
 - No measured accuracy metrics exist — the golden dataset defines *targets* only.

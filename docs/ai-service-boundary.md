@@ -75,10 +75,47 @@ Response: a validated `RiskAnalysisResult` (the JSON shape from [api-contract.md
 
 > **Phase 2 status:** implemented end-to-end with the evidence package passed directly in the request (changed files + change summary; the retrieval-backed sections are empty until Phase 3). The concrete request/response models live in `ai-service/app/models/` (`requests.py`, `responses.py`); `AnalysisUsage` carries model, prompt version, latency, tokens (null when the provider exposes none), estimated cost (null unless pricing is configured), validation status, repair attempts, and an evidence-truncation flag. `promptVersion` pins a known versioned prompt (`risk-v1`) or falls back to the default.
 
-### `POST /internal/v1/analysis/incident`
-Same shape philosophy: incident + normalized events + deployments-in-window + retrieved context in; validated `IncidentInvestigationResult` out.
+### `POST /internal/v1/analysis/incident` (Phase 5)
+The backend owns job orchestration; this endpoint is **one synchronous analysis call** that
+retrieves evidence from the incident context and returns a grounded investigation:
+```json
+{
+  "projectId": "…",                    // REQUIRED — hard tenant filter, server-enforced
+  "analysisId": "…",                   // backend analysis-run id (for logs/trace)
+  "promptVersion": "incident-v1",      // optional; pins a known versioned prompt
+  "incident": {
+    "title": "HTTP 401 after JWT signing-key rotation",
+    "severity": "Sev1", "status": "Open", "environment": "production", "service": "acmepay-api",
+    "summary": "…", "startedAtUtc": "…", "detectedAtUtc": "…",
+    "symptoms": [ "JwtSecurityTokenHandler: IDX10503 signature validation failed" ],
+    "knownFacts": [ "Severity: Sev1" ],
+    "unknowns": [ "No deployment timestamp was supplied." ],
+    "timeline": [ { "occurredAtUtc": "…", "type": "deployment", "source": "cicd", "message": "…", "rawData": null } ]
+  },
+  "maxEvidenceChunks": null, "maxCharsPerChunk": null   // optional budget overrides (clamped)
+}
+```
+→ `200` with `analysisType: "incident"`, `usage`, and a validated `IncidentAnalysisResult`:
+```json
+{
+  "rootCauseCandidates": [
+    { "candidateId": "…", "title": "…", "confidence": 0.74, "status": "Candidate",
+      "evidenceIds": [ "chunk:…" ], "reasoning": "…", "unknowns": [] }
+  ],
+  "remediation": { "immediateMitigation": "…", "investigationSteps": [], "recommendedRemediation": null,
+                    "validationSteps": [], "rollbackConsideration": "…", "insufficientEvidence": false },
+  "unknowns": [ "No database telemetry was available." ],
+  "evidence": [ { "id": "chunk:…", "type": "Document", "source": "chunk:…", "summary": "…", "metadata": {} } ]
+}
+```
+Grounding (deterministic, post-validation, [ADR-0007](adr/0007-structured-output-schema-validation.md)):
+every `rootCauseCandidates[].evidenceIds` must contain **at least one** id from the evidence
+index and every id must exist — an empty list is rejected by schema validation and unknown
+ids by the grounding check. Retrieval queries are generated server-side from the incident
+context (title, symptom/error messages, service, symbol-like terms) preserving exact
+identifiers for the keyword leg (brief §13–14).
 
-### `POST /internal/v1/evaluations/run` (Phase 7)
+### `POST /internal/v1/evaluations/run` (Phase 8)
 `{ "datasetId": "…", "strategies": ["keyword", "vector", "hybrid", "pipeline"], "limit": 20 }` → 202; results land in the `ai` schema and are also returned for the backend to persist in `evaluation_runs`.
 
 ### Health
@@ -86,7 +123,8 @@ Same shape philosophy: incident + normalized events + deployments-in-window + re
 
 ## 4. Reliability contract
 
-- **Timeouts:** the backend enforces a generous HTTP timeout (e.g. 120s per reasoning call); the AI service enforces its own Gemini call timeout (e.g. 60s) with **retry-on-429/5xx with exponential backoff + jitter, max 3** — never blind retries on validation failures.
+- **Timeouts:** the backend enforces a generous HTTP timeout (e.g. 120s per reasoning call); the AI service enforces its own Gemini call timeout (e.g. 60s) with **retry-on-429/5xx with exponential backoff + jitter, max 3** — never blind retries on validation failures. The backend additionally wraps each async job in a per-job timeout (default 600s) so no analysis stays `Running` forever.
+- **Retries:** transient failures (429/504/502) are retried by the backend worker with bounded exponential backoff (default 2 retries); 400/401/403/422 validation failures are never retried.
 - **Payload limits:** document content capped (e.g. 5 MB per document, 100 docs/batch); retrieval request bodies capped.
 - **Safe failure:** on unrecoverable validation failure the service returns `422` with `{ code: "AI_VALIDATION_FAILED", details: { attempts, errors } }` — it never returns unvalidated prose as a "result".
 - **Idempotency keys** accepted on ingest; analysis calls are naturally idempotent (pure function of their input package).

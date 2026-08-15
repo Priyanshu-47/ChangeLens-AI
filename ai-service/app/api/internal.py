@@ -15,8 +15,18 @@ from fastapi import APIRouter, Depends, Header, Request
 
 from ..config import Settings
 from ..errors import ContractVersionError, InternalAuthError
-from ..models.requests import IngestDocumentsRequest, RetrievalSearchRequest, RiskAnalysisRequest
-from ..models.responses import IngestResponse, RetrievalSearchResponse, RiskAnalysisResponse
+from ..models.requests import (
+    IncidentAnalysisRequest,
+    IngestDocumentsRequest,
+    RetrievalSearchRequest,
+    RiskAnalysisRequest,
+)
+from ..models.responses import (
+    IncidentAnalysisResponse,
+    IngestResponse,
+    RetrievalSearchResponse,
+    RiskAnalysisResponse,
+)
 from ..providers.base import IAIProvider
 from ..retrieval.service import RetrievalService
 from ..services.analysis_service import AnalysisService
@@ -74,6 +84,20 @@ async def analyze_risk(
     request: RiskAnalysisRequest, fastapi_request: Request
 ) -> RiskAnalysisResponse:
     return await _analysis_service(fastapi_request).analyze_change_risk(request)
+
+
+@router.post(
+    "/analysis/incident",
+    response_model=IncidentAnalysisResponse,
+    dependencies=[Depends(require_internal_auth)],
+)
+async def analyze_incident(
+    request: IncidentAnalysisRequest, fastapi_request: Request
+) -> IncidentAnalysisResponse:
+    """Phase 5: structured incident investigation (hybrid retrieval + grounded output).
+    The backend owns job orchestration; this endpoint is one synchronous analysis call.
+    """
+    return await _analysis_service(fastapi_request).analyze_incident(request)
 
 
 @router.post(

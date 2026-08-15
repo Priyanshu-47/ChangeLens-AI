@@ -152,3 +152,61 @@ def test_correlation_id_in_error_envelope(client):
         json={},
     )
     assert response.json()["traceId"] == "trace-abc"
+
+
+# --- incident investigation endpoint (Phase 5) ---
+
+
+def incident_body(**overrides) -> dict:
+    body = {
+        "projectId": "p1",
+        "analysisId": "a1",
+        "promptVersion": "incident-v1",
+        "incident": {
+            "title": "HTTP 401 after JWT signing-key rotation",
+            "severity": "Sev1",
+            "status": "Open",
+            "environment": "production",
+            "service": "acmepay-api",
+            "symptoms": ["JwtSecurityTokenHandler: IDX10503 signature validation failed"],
+            "knownFacts": ["Severity: Sev1"],
+            "unknowns": ["No deployment timestamp was supplied."],
+            "timeline": [
+                {
+                    "occurredAtUtc": "2026-08-01T08:55:00Z",
+                    "type": "deployment",
+                    "message": "Deployed signing-key rotation",
+                }
+            ],
+        },
+    }
+    body.update(overrides)
+    return body
+
+
+def test_incident_analysis_requires_internal_auth(client):
+    response = client.post("/internal/v1/analysis/incident", json=incident_body())
+    assert response.status_code == 401
+
+
+def test_incident_analysis_rejects_invalid_body(client):
+    response = client.post(
+        "/internal/v1/analysis/incident",
+        headers=auth_headers(),
+        json=incident_body()["incident"],  # missing projectId at top level
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_REQUEST"
+
+
+def test_incident_analysis_with_mock_returns_grounded_result(client):
+    response = client.post(
+        "/internal/v1/analysis/incident", headers=auth_headers(), json=incident_body()
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["analysisType"] == "incident"
+    assert payload["usage"]["validationStatus"] == "valid"
+    assert payload["usage"]["promptVersion"] == "incident-v1"
+    assert payload["result"]["remediation"]["insufficientEvidence"] is True
+    assert isinstance(payload["result"]["unknowns"], list)

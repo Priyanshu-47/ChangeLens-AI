@@ -72,29 +72,32 @@ sequenceDiagram
     A-->>U: 200 RiskReport (evidence-grounded)
 ```
 
-### Workflow B — Incident Investigation
+### Workflow B — Incident Investigation (Phase 5)
 
 ```mermaid
 sequenceDiagram
     participant U as React SPA
     participant A as ASP.NET Core
+    participant W as Background Worker
     participant AI as FastAPI AI Service
     participant G as Gemini API
     participant P as PostgreSQL
 
-    U->>A: POST /api/v1/incidents/{id}/investigate
-    A->>A: Normalize incident (severity, service, env, timestamps), deterministic classification
-    A->>P: Recent deployments/changes for affected service (time-windowed)
-    A->>AI: POST /internal/v1/retrieval/search (incident symptoms + error signature, project-scoped)
-    AI->>P: Vector + keyword retrieval of similar incidents, code, runbooks
-    AI-->>A: Ranked context
-    A->>AI: POST /internal/v1/analysis/incident (incident + evidence package)
+    U->>A: POST /api/v1/incidents/{id}/investigate (requestId?)
+    A->>A: Authorize (Engineer+); build normalized incident context; persist AnalysisRun (Queued)
+    A->>W: Enqueue job (bounded Channel, concurrency = Analysis:MaxConcurrency)
+    A-->>U: 202 Accepted { analysisId, status: Queued, statusUrl }
+    W->>W: Queued → Running; audit AnalysisStarted
+    W->>AI: POST /internal/v1/analysis/incident (normalized context; AI discovers evidence)
+    AI->>AI: Retrieval queries from context (title, symptoms, service, symbol-like terms)
+    AI->>P: Hybrid retrieval: vector + keyword + metadata + dependency → RRF, project-scoped
     AI->>G: generateContent(responseSchema=InvestigationSchema)
     G-->>AI: JSON candidate
-    AI->>AI: Validate + repair → safe failure
-    AI-->>A: Root-cause candidates with per-candidate evidence + confidence + unknowns
-    A->>P: Persist Investigation + AnalysisRun + evidence links
-    A-->>U: 202 Accepted → poll analysis status
+    AI->>AI: Pydantic validation + grounding (every candidate cites a real evidence id) → safe failure
+    AI-->>W: Validated rootCauseCandidates[] + remediation + unknowns + usage
+    W->>P: Running → Succeeded; persist result JSONB, model, prompt version, timestamps; audit AnalysisCompleted
+    U->>A: GET /api/v1/analyses/{id} (poll)
+    A-->>U: 200 { status: Succeeded, result, model, promptVersion, timestamps }
 ```
 
 Both workflows share the same backbone: **deterministic preprocessing in .NET → hybrid retrieval in the AI service → one structured LLM call over an evidence package → schema validation → persistence with evidence links and full AI-run metadata.**
@@ -109,14 +112,16 @@ Both workflows share the same backbone: **deterministic preprocessing in .NET �
 | `POST /internal/v1/retrieval/search` | Hybrid retrieval: vector + keyword + metadata filters → ranked results |
 | `POST /internal/v1/analysis/risk` | Structured risk report over an evidence package |
 | `POST /internal/v1/analysis/incident` | Structured incident investigation over an evidence package |
-| `POST /internal/v1/evaluations/run` | Run evaluation over the golden dataset (Phase 7) |
+| `POST /internal/v1/evaluations/run` | Run evaluation over the golden dataset (Phase 8) |
 | `GET /internal/v1/health/live`, `GET /internal/v1/health/ready` | Liveness / readiness (includes LLM config probe) |
 
 Full request/response schemas: [docs/ai-service-boundary.md](ai-service-boundary.md). Contract versioning: both sides pin `X-Contract-Version`; breaking changes bump the version and are coordinated across releases (single repo makes this cheap).
 
 ### Where orchestration lives
 
-The **ASP.NET Core API orchestrates both workflows**. The AI service is a *capability provider*: it never decides which change to analyze, never stores business entities, and never calls tools on its own. Tool definitions (Phase 6) live in .NET; the AI service proposes tool calls, .NET validates, authorizes, executes, and audits them. See [ADR-0002](adr/0002-service-boundary.md) and [ADR-0008](adr/0008-controlled-tool-use.md).
+The **ASP.NET Core API orchestrates both workflows**. The AI service is a *capability provider*: it never decides which change to analyze, never stores business entities, and never calls tools on its own. Tool definitions (Phase 7) live in .NET; the AI service proposes tool calls, .NET validates, authorizes, executes, and audits them. See [ADR-0002](adr/0002-service-boundary.md) and [ADR-0008](adr/0008-controlled-tool-use.md).
+
+**Async analysis jobs (Phase 5, [ADR-0009](adr/0009-async-analysis-jobs.md)):** Workflow B runs as a job. The API persists an `AnalysisRun` (`Queued`), enqueues it on a **bounded in-process `Channel`** (`AnalysisJobQueue`), and returns `202`. An `AnalysisWorker` `BackgroundService` (concurrency capped by `Analysis:MaxConcurrency`, default 2) consumes jobs in DI scopes and drives `IncidentInvestigationOrchestrator`: `Queued → Running`, builds the normalized incident context, calls the AI service, validates, persists the result, and transitions to `Succeeded | Failed`. No Redis/Kafka/SQS — the queue is in-process for the MVP; a full queue persists `Failed(QUEUE_FULL)` instead of dropping work. Transient AI failures are retried with bounded backoff; a per-job timeout (default 600s) guarantees no job stays `Running` forever; interrupted runs are recovered as `WORKER_INTERRUPTED` on startup.
 
 ## 6. Data architecture
 
@@ -155,7 +160,7 @@ Rationale: one container, one backup, $0, and pgvector on the same instance. Cos
 ## 8. Deliberate exclusions (MVP)
 
 - **No separate vector database** (Pinecone/Qdrant/Weaviate) — pgvector on the same instance is sufficient and free. [ADR-0003]
-- **No message broker** (Redis/Kafka/SQS) — ingestion and analysis are synchronous-or-job-based; SQS is only a Phase 10 async option. No demonstrated requirement in MVP.
+- **No message broker** (Redis/Kafka/SQS) — ingestion and analysis use the bounded in-process async job queue (ADR-0009); SQS is only a Phase 11 async option. No demonstrated requirement in MVP.
 - **No multi-agent framework** — a single controlled tool-using loop covers both workflows; multi-agent would be marketing, not engineering. [ADR-0008]
 - **No LangChain/LlamaIndex dependency** — the RAG pipeline here is small, and owning it makes evaluation, prompt injection defense, and observability explicit and testable.
 - **No real GitHub integration in MVP** — changes are submitted via API/demo data and resolved through a **local, sandboxed git change source** (repository path restricted to a configured root, validated revisions, fixed git argument list — no arbitrary shell commands, no remote fetch). GitHub App integration is a post-MVP option; Roslyn parses the actual files either way.
@@ -165,8 +170,8 @@ Rationale: one container, one backup, $0, and pgvector on the same instance. Cos
 
 | Target | When | What |
 | --- | --- | --- |
-| Local Docker (compose) | Phase 1 (postgres) → Phase 9 (all) | `frontend`, `backend`, `ai-service`, `postgres` |
+| Local Docker (compose) | Phase 1 (postgres) → Phase 10 (all) | `frontend`, `backend`, `ai-service`, `postgres` |
 | Free-tier demo | Post-MVP | Static frontend on free hosting; APIs either free-tier compute (cold starts accepted) or recorded demo; documented in [deployment-strategy.md](deployment-strategy.md) |
-| AWS | Phase 10, only when local is stable | CloudFront+S3, container compute, managed PostgreSQL, S3, SQS, CloudWatch, Secrets Manager, Cognito — modular IaC, cost-estimated before anything is provisioned |
+| AWS | Phase 11, only when local is stable | CloudFront+S3, container compute, managed PostgreSQL, S3, SQS, CloudWatch, Secrets Manager, Cognito — modular IaC, cost-estimated before anything is provisioned |
 
 Full detail: [docs/deployment-strategy.md](deployment-strategy.md).

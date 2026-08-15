@@ -28,6 +28,7 @@ public sealed class ChangeRiskAnalysisService(
     IAppDbContext db,
     ILogger<ChangeRiskAnalysisService> logger)
 {
+    private static readonly JsonSerializerOptions ResultJson = new(JsonSerializerDefaults.Web);
     public async Task<ChangeRiskAnalysisResponse> AnalyzeChangeRiskAsync(
         AnalyzeChangeRiskRequest request, CancellationToken ct)
     {
@@ -69,6 +70,7 @@ public sealed class ChangeRiskAnalysisService(
             Type = "ChangeRisk",
             Status = "Running",
             ChangeIdentifier = ChangeIdentifier(request),
+            QueuedAtUtc = DateTime.UtcNow,
             StartedAtUtc = DateTime.UtcNow,
             RetrievalConfig = JsonSerializer.Serialize(new
             {
@@ -89,6 +91,8 @@ public sealed class ChangeRiskAnalysisService(
             run.Status = "Succeeded";
             run.Model = response.Usage.Model;
             run.PromptVersion = response.Usage.PromptVersion;
+            run.ResultJson = JsonSerializer.Serialize(response.Result, ResultJson);
+            run.ResultSchemaVersion = "change-risk-v1";
             run.CompletedAtUtc = DateTime.UtcNow;
         }
         catch (ChangeLensException ex)

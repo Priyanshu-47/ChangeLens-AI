@@ -11,7 +11,7 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 
 ## Status
 
-**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete. Phase 4 (Change intelligence) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; Phase 3 adds a real RAG pipeline (structure-aware chunking, deterministic + Gemini embeddings, pgvector in the `ai` schema, RRF hybrid retrieval with grounding enforcement); Phase 4 adds the change-intelligence engine — a Roslyn analyzer and dependency graph in .NET, symbol-level change analysis with impact traversal, a safe local-git change source, a dependency retrieval leg (vector + keyword + metadata + dependency → RRF), `analysis_runs` persistence, and a demo scenario — an uncommitted signing-key follow-up change in `TokenService.cs` that the analyzer resolves against git HEAD. Mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
+**Phase 0 (Architecture) — complete. Phase 1 (Backend foundation) — complete. Phase 2 (AI service) — complete. Phase 3 (Ingestion + hybrid RAG) — complete. Phase 4 (Change intelligence) — complete. Phase 5 (Incident investigation + async analysis) — complete.** The backend is a tested ASP.NET Core 10 API against PostgreSQL; the Python FastAPI AI service proves the full `.NET → FastAPI → Gemini` path with schema-validated structured output; Phase 3 adds a real RAG pipeline (structure-aware chunking, deterministic + Gemini embeddings, pgvector in the `ai` schema, RRF hybrid retrieval with grounding enforcement); Phase 4 adds the change-intelligence engine — a Roslyn analyzer and dependency graph in .NET, symbol-level change analysis with impact traversal, a safe local-git change source, a dependency retrieval leg (vector + keyword + metadata + dependency → RRF), `analysis_runs` persistence, and a demo scenario — an uncommitted signing-key follow-up change in `TokenService.cs` that the analyzer resolves against git HEAD. Phase 5 adds the **incident investigation workflow** (normalized incident context → hybrid retrieval → grounded `rootCauseCandidates[]` + remediation + unknowns) and the **async job system** — `POST /incidents/{id}/investigate` → `202` → bounded in-process queue + background worker → `GET /analyses/{id}` polling, with an enforced job state machine (`Queued → Running → Succeeded | Failed`), bounded retries, per-job timeouts, idempotency keys, and cross-project isolation. Mock providers in tests/local dev; live Gemini behind `GEMINI_API_KEY`. See [docs/development-sequence.md](docs/development-sequence.md) for the plan.
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
@@ -20,12 +20,13 @@ It combines source-code analysis, dependency analysis, API contract analysis, hi
 | 2 | FastAPI AI service + Gemini provider | ✅ Complete |
 | 3 | Ingestion, chunking, embeddings, pgvector, hybrid retrieval | ✅ Complete |
 | 4 | Change intelligence: Roslyn + dependency graph + change-risk pipeline | ✅ Complete |
-| 5 | React UI | ⏳ Pending |
-| 6 | Agent tools + tool tracing | ⏳ Pending |
-| 7 | Evaluation framework + golden dataset | ⏳ Pending |
-| 8 | Observability + security hardening | ⏳ Pending |
-| 9 | Docker + CI/CD | ⏳ Pending |
-| 10 | AWS deployment (only after local MVP is stable) | ⏳ Pending |
+| 5 | Incident investigation + async analysis jobs (202 + poll) | ✅ Complete |
+| 6 | React UI | ⏳ Pending |
+| 7 | Agent tools + tool tracing | ⏳ Pending |
+| 8 | Evaluation framework + golden dataset | ⏳ Pending |
+| 9 | Observability + security hardening | ⏳ Pending |
+| 10 | Docker + CI/CD | ⏳ Pending |
+| 11 | AWS deployment (only after local MVP is stable) | ⏳ Pending |
 
 ## Architecture at a glance
 
@@ -111,9 +112,9 @@ changelens-ai/
    ```bash
    cd backend && dotnet test tests/ChangeLens.UnitTests
    CHANGELENS_TEST_CONNECTION_STRING="…test connection string…" dotnet test tests/ChangeLens.Api.IntegrationTests
-   cd ../ai-service && .venv/Scripts/python -m pytest -q   # 88 tests, zero Gemini calls, no DB needed
+   cd ../ai-service && .venv/Scripts/python -m pytest -q   # 118 tests, zero Gemini calls, no DB needed
    TEST_DATABASE_URL="postgresql+psycopg://changelens@127.0.0.1:5433/changelens_test" \
      .venv/Scripts/python -m pytest tests/test_db_integration.py -q   # pgvector integration tests
    ```
 
-Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md). The four-service `docker compose up` (adding the React frontend) is a Phase 9 goal — the Phase 3 compose already runs postgres (pgvector image) + ai-service + backend.
+Full instructions: [backend/README.md](backend/README.md), [ai-service/README.md](ai-service/README.md). The four-service `docker compose up` (adding the React frontend) is a Phase 10 goal — the Phase 3 compose already runs postgres (pgvector image) + ai-service + backend.
