@@ -49,7 +49,10 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const correlationId = crypto.randomUUID();
   lastCorrelationId = correlationId;
 
-  const url = new URL(`${API_BASE_URL}${path}`);
+  // API_BASE_URL may be absolute (dev: http://localhost:5000/api/v1) or relative
+  // (production: /api/v1 behind the nginx same-origin proxy). `new URL` needs a
+  // base for relative paths, so fall back to the page origin.
+  const url = new URL(`${API_BASE_URL}${path}`, window.location.origin);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== null && value !== undefined && value !== '') {
