@@ -30,7 +30,12 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
+      # Full history: the change-analysis tests resolve the demo change's base as the
+      # parent of the last commit that touched TokenService.cs (default checkout is
+      # shallow, which would leave that history unavailable).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -75,6 +80,8 @@ jobs:
         working-directory: ai-service
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -109,6 +116,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -148,6 +157,8 @@ jobs:
         working-directory: ai-service
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
