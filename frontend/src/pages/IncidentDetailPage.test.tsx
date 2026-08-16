@@ -52,12 +52,12 @@ describe('IncidentDetailPage', () => {
     ]);
     renderDetail();
 
-    expect(await screen.findByText('HTTP 401 after JWT signing-key rotation')).toBeInTheDocument();
-    expect(screen.getByText('JWT signing key rotated')).toBeInTheDocument();
-    expect(screen.getByText('HTTP 401 spike')).toBeInTheDocument();
-    // The investigations list loads via a separate request; under parallel test
-    // workers the default 1s findBy timeout occasionally loses the race, so wait
-    // a little longer (assertion-hardening, not a product change).
+    // All async renders go through mocked fetches; under parallel test workers the
+    // default 1s findBy timeout occasionally loses the race, so every wait uses a
+    // generous timeout (assertion-hardening, not a product change).
+    expect(await screen.findByText('HTTP 401 after JWT signing-key rotation', undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('JWT signing key rotated', undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('HTTP 401 spike', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(
       await screen.findByText('No investigations yet', undefined, { timeout: 5000 }),
     ).toBeInTheDocument();
