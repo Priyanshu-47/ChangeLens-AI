@@ -47,7 +47,7 @@ Secrets flow via `.env` (compose reads it); `docker compose up` requires `INTERN
 | **GitHub Codespaces / devcontainer** | Full local demo, zero hosting | The most honest demo: `docker compose up` in a codespace |
 | **Personal VPS (~$5/mo)** | All-in-one self-host | Lowest-cost always-on option; documented with a compose `prod` profile |
 
-**MVP decision:** the primary demo is local Docker (+ a seeded demo dataset + [docs/demo-script.md](demo-script.md)). Free-tier hosting is a documented *option*, not a promise — portfolio honesty rule: never present ephemeral free hosting as production. **Docker verification status:** the compose stack is statically validated in this environment; `docker compose up --build` must be run where Docker is available (see the Phase 9 exit criteria in development-sequence.md).
+**MVP decision:** the primary demo is local Docker (+ a seeded demo dataset + [docs/demo-script.md](demo-script.md)). Free-tier hosting is a documented *option*, not a promise — portfolio honesty rule: never present ephemeral free hosting as production. **Docker verification status:** the full stack has been verified end-to-end on Docker — `docker compose up --build` starts four healthy services (postgres, ai-service, backend, frontend) and the canonical AcmePay demo (incident investigation 202 → Succeeded with a grounded result and tool trace, plus change-risk) runs against the real containers (see the Phase 10 exit criteria in development-sequence.md).
 
 ## 4. AWS path (Phase 11 — modular, cost-estimated, never provisioned early)
 
