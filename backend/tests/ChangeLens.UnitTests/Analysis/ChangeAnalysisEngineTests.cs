@@ -45,9 +45,10 @@ public sealed class ChangeAnalysisEngineTests
                 Language = "csharp"
             }
         ],
-        // The demo follow-up change is committed at HEAD; the base is its parent so the
-        // change is reproducible on any clean checkout.
-        BaseRevision = "HEAD~1"
+        // The demo follow-up change is committed; the base is the parent of the last
+        // commit that modified the file, so the change is reproducible on any clean
+        // checkout (and robust to intervening commits).
+        BaseRevision = DemoChangeLocator.BaseRevision()
     };
 
     [Fact]

@@ -84,13 +84,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Unit tests (zero Gemini, no database required)
-        run: python -m pytest tests/ -q --ignore=tests/test_db_integration.py
-
-      - name: Migrate ai schema (Alembic)
+      - name: Migrate ai schema (Alembic, creates pgvector extension)
         env:
           DATABASE_URL: postgresql+psycopg://changelens:changelens_test_password@localhost:5432/changelens_test
         run: alembic upgrade head
+
+      # The /ready probe checks DB connectivity + the pgvector extension, so unit
+      # tests point at the service container (migrated above). Zero Gemini calls.
+      - name: Unit tests
+        env:
+          DATABASE_URL: postgresql+psycopg://changelens:changelens_test_password@localhost:5432/changelens_test
+        run: python -m pytest tests/ -q --ignore=tests/test_db_integration.py
 
       - name: PostgreSQL integration tests
         env:
