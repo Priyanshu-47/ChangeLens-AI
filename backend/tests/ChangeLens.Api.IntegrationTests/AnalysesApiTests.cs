@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using ChangeLens.Api.IntegrationTests.Infrastructure;
@@ -139,10 +140,10 @@ public sealed class AnalysesApiTests
     [Fact]
     public async Task DemoScenario_ChangeRiskAnalysis_DiscoversEvidenceFromRoslynAndGraph()
     {
-        // Mock end-to-end (brief §46): the real engine resolves the demo repo's
-        // UNCOMMITTED TokenService.cs follow-up change (git HEAD → working tree), runs
-        // Roslyn, builds the dependency graph, and enriches the AI request — the fake AI
-        // client grounds its response in that evidence. No Gemini call happens.
+        // Mock end-to-end (brief §46): the real engine resolves the demo repo's committed
+        // TokenService.cs follow-up change (git base revision → working tree), runs Roslyn,
+        // builds the dependency graph, and enriches the AI request — the fake AI client
+        // grounds its response in that evidence. No Gemini call happens.
         var ai = new FakeAiClient();
         var api = NewApi(ai);
         var (token, _) = await api.RegisterAsync($"ana-demo-{Guid.NewGuid():N}@test.dev");
@@ -158,7 +159,7 @@ public sealed class AnalysesApiTests
                 {
                     new { path = "src/AcmePay.Application/Auth/TokenService.cs", changeType = "modified", language = "csharp" }
                 },
-                baseRevision = "HEAD"
+                baseRevision = DemoChangeBaseRevision()
             });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -195,6 +196,50 @@ public sealed class AnalysesApiTests
         Assert.NotNull(problem);
         Assert.Equal("ai_validation_failed", problem.Code);
         Assert.NotNull(problem.Details);
+    }
+
+    /// <summary>
+    /// Parent of the most recent commit that modified the demo TokenService.cs — the
+    /// committed demo follow-up change (robust to intervening commits, needs full
+    /// checkout history, which CI provides via fetch-depth: 0).
+    /// </summary>
+    private static string DemoChangeBaseRevision()
+    {
+        var workspace = FindWorkspaceRoot();
+        static string Git(string root, string args)
+        {
+            var psi = new ProcessStartInfo("git", args)
+            {
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var process = Process.Start(psi)!;
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+            return output;
+        }
+
+        const string file = "data/demo-repository/src/AcmePay.Application/Auth/TokenService.cs";
+        var lastCommit = Git(workspace, $"log -1 --format=%H -- {file}");
+        return Git(workspace, $"rev-parse {lastCommit}^");
+    }
+
+    private static string FindWorkspaceRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, "data", "demo-repository")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate data/demo-repository.");
     }
 
     private static object ValidBody(Guid projectId) => new
