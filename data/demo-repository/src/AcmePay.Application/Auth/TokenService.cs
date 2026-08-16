@@ -79,11 +79,27 @@ public sealed class TokenService(IConfiguration configuration)
         return false;
     }
 
+    /// <summary>
+    /// Rotation observability: returns a stable fingerprint of the CURRENT signing key so
+    /// monitoring can detect a rotation even when the key value is redacted from logs.
+    /// The fingerprint is the hex SHA-256 of the key — safe to log.
+    /// </summary>
+    public string CurrentSigningKeyFingerprint()
+    {
+        var bytes = Encoding.UTF8.GetBytes(SigningKeys()[0]);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash);
+    }
+
     private IReadOnlyList<string> SigningKeys()
     {
         var raw = configuration["Auth:JwtSigningKeys"] ?? configuration["Auth:JwtSigningKey"]
             ?? throw new InvalidOperationException("Auth:JwtSigningKeys is not configured.");
 
-        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return ParseSigningKeys(raw);
     }
+
+    /// <summary>Parses the ordered, comma-separated key-history list (unit-testable).</summary>
+    public static IReadOnlyList<string> ParseSigningKeys(string raw)
+        => raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }
