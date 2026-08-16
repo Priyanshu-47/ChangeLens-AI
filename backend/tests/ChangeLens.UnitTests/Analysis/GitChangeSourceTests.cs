@@ -94,11 +94,12 @@ public sealed class GitChangeSourceTests
     {
         // The demo repository's TokenService.cs carries the committed demo follow-up
         // change (signing-key parsing extraction + rotation fingerprint). The base is
-        // the parent revision (git), the target is the current working tree — so the
-        // resolution must come from two different sources on any clean checkout.
+        // the parent of the last commit that modified the file (git), the target is the
+        // current working tree — so the resolution must come from two different sources
+        // on any clean checkout.
         var resolution = Source().ResolveChange(
             [File("src/AcmePay.Application/Auth/TokenService.cs")],
-            baseRevision: "HEAD~1",
+            baseRevision: DemoChangeLocator.BaseRevision(),
             targetRevision: null);
 
         var file = Assert.Single(resolution.Files);
