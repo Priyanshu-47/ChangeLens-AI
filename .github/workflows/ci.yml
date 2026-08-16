@@ -82,7 +82,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Unit tests (zero Gemini, no database required)
         run: python -m pytest tests/ -q --ignore=tests/test_db_integration.py
@@ -151,7 +151,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Migrate ai schema
         env:
