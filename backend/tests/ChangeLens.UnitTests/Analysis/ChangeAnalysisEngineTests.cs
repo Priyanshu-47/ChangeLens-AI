@@ -7,12 +7,12 @@ using Microsoft.Extensions.Options;
 namespace ChangeLens.UnitTests.Analysis;
 
 /// <summary>
-/// Phase 4 demo scenario (brief §40): the demo repository's working tree contains a real,
-/// UNCOMMITTED follow-up change in TokenService.cs (signing-key parsing extraction +
-/// rotation fingerprint for monitoring). The engine must resolve base (git HEAD) vs
-/// target (working tree), run Roslyn, build the dependency graph, and produce a change
-/// model with changed/added symbols, impacted symbols, dependency edges, and dependency
-/// paths — without any AI call.
+/// Phase 4 demo scenario (brief §40): the demo repository's TokenService.cs contains the
+/// committed demo follow-up change (signing-key parsing extraction + rotation fingerprint
+/// for monitoring). The engine must resolve base (git parent revision) vs target (current
+/// working tree), run Roslyn, build the dependency graph, and produce a change model with
+/// changed/added symbols, impacted symbols, dependency edges, and dependency paths —
+/// without any AI call.
 /// </summary>
 public sealed class ChangeAnalysisEngineTests
 {
@@ -45,7 +45,9 @@ public sealed class ChangeAnalysisEngineTests
                 Language = "csharp"
             }
         ],
-        BaseRevision = "HEAD"
+        // The demo follow-up change is committed at HEAD; the base is its parent so the
+        // change is reproducible on any clean checkout.
+        BaseRevision = "HEAD~1"
     };
 
     [Fact]
