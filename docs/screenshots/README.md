@@ -1,26 +1,36 @@
-# Screenshots
+# ChangeLens AI — Screenshots
 
-No screenshots were captured for this release.
+The final screenshot set for the portfolio is **six images**, all captured from the
+**real running application** (Docker stack, `http://localhost:8080`, React production
+build) using a headless Chrome browser against the live UI. No mockups, no
+placeholders, no generated images.
 
-The Phase 10 environment has no browser/browser-automation tooling, so the UI could not be opened and screenshotted. Per the project's no-fabrication rule, no mockups or generated images are published here.
+All data shown is the **synthetic AcmePay demo dataset** (demo incident "HTTP 401
+after JWT signing-key rotation", deterministic mock AI provider). It is not
+production data.
 
-What was verified instead (and where):
+| Screenshot | Purpose |
+| --- | --- |
+| `01-dashboard.png` | Project dashboard — AcmePay context, incident/analysis counts, recent incidents & analyses |
+| `02-incident-detail.png` | Incident detail — JWT signing-key rotation incident, severity, service, timeline |
+| `03-investigation-result.png` | Completed investigation — root-cause candidates, confidence, evidence, remediation, unknowns |
+| `04-analysis-trace.png` | Analysis trace — per-stage timings, tool calls, retrieval explorer (desktop viewport) |
+| `05-tool-trace.png` | Tool calls — `get_dependency_paths` + `get_runbook`, execution status and durations |
+| `06-change-risk.png` | Change-risk result — risk level, confidence, impacted components, evidence, validation |
 
-- **API end-to-end:** the canonical demo was driven against the real running stack (login → project → incident → investigate `202` → poll `Queued → Running → Succeeded` → grounded root-cause candidates → trace with real stage timings + tool calls → change-risk with `riskLevel=MEDIUM`, validation `valid`). See the Phase 10 final report and [docs/demo-script.md](../demo-script.md).
-- **UI behavior:** 34 React component tests cover every screen in the demo journey (login, dashboard, incidents, incident detail + timeline, investigate + 202, async polling, analysis result with evidence linking, grounding badge, unknowns, trace + retrieval explorer + tool calls, change-risk submission and result).
+## Provenance
 
-## How to capture the real screenshots
+- Application: `http://localhost:8080` (docker compose stack, four healthy services)
+- Login: seeded demo account `engineer@changelens.dev` / `EngineerPass!2026` (development-only)
+- Project: `AcmePay` (synthetic)
+- Data: real API responses from the running backend with the **mock AI provider** (zero Gemini calls)
+- Tooling: headless Chrome via `puppeteer-core`; `04-analysis-trace.png` captured at a 2048×1280 desktop viewport (3072×1920 px @1.5x)
 
-On any machine with Docker + a browser:
+## Re-capturing
 
 ```bash
-cp .env.example .env
 docker compose up -d --build
-cd ai-service && DATABASE_URL="postgresql+psycopg://changelens:changelens_dev_password@localhost:5432/changelens" \
-  EMBEDDING_PROVIDER=mock ./.venv/Scripts/python scripts/seed_demo.py
-# open http://localhost:8080, log in with engineer@changelens.dev / EngineerPass!2026,
-# walk the journey in docs/demo-script.md, then save:
-#   01-login.png 02-dashboard.png 03-incidents.png 04-incident-detail.png
-#   05-investigation-running.png 06-investigation-result.png 07-evidence-trace.png
-#   08-tool-trace.png 09-change-risk.png 10-evaluation.png
+ai-service/.venv/Scripts/python scripts/acmepay_demo.py   # recreate the canonical demo data
+# then log in at http://localhost:8080 with a demo account and capture manually,
+# or re-run the puppeteer capture script used to produce these images.
 ```
